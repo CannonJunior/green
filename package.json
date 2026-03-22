@@ -1,0 +1,26 @@
+{
+  "name": "green",
+  "version": "0.1.0",
+  "description": "Personal AI assistant — iMessage control plane for Claude Code projects",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "dev:local": "tsx src/index.ts --channel local",
+    "start": "node dist/index.js",
+    "start:local": "node dist/index.js --channel local"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "js-yaml": "^4.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
