@@ -2,11 +2,17 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Config, ProjectConfig } from './config.js';
 import { getProject } from './config.js';
 import { runClaudeCode, formatResult } from './skills/claude-code.js';
+import { fetchUrl } from './skills/web-fetch.js';
+import { generateBriefing } from './skills/briefing.js';
 
 // Per-sender conversation history (keyed by phone number or "local")
 const histories = new Map<string, Anthropic.MessageParam[]>();
 
-const TOOLS: Anthropic.Tool[] = [
+const TOOLS: Anthropic.Messages.ToolUnion[] = [
+  {
+    type: 'web_search_20250305',
+    name: 'web_search',
+  },
   {
     name: 'run_claude_code',
     description: [
@@ -30,6 +36,22 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'generate_briefing',
+    description: 'Generate a briefing summarising recent git activity across all projects, service health, disk usage, and uptime. Use when the user asks for a status update or daily summary.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'fetch_url',
+    description: 'Fetch the contents of a URL and return it as plain text. Use this to read documentation pages, check package versions, or retrieve any public web page.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'The URL to fetch.' },
+      },
+      required: ['url'],
+    },
+  },
+  {
     name: 'list_projects',
     description: 'Return the names and descriptions of all Claude Code projects available on this machine.',
     input_schema: {
@@ -47,14 +69,14 @@ function buildSystemPrompt(config: Config): string {
 
   return [
     `You are Green, a personal AI assistant for ${config.green.name}'s development workflow.`,
-    `You receive messages via iMessage and can run Claude Code against projects on a Linux machine.`,
+    `You receive messages via Signal and can run Claude Code against projects on a Linux machine.`,
     '',
     'Available projects:',
     projectList,
     '',
     'Guidelines:',
-    '- Be concise. iMessage is not a document editor.',
-    '- Plain text only — no markdown, no bullet asterisks. iMessage does not render markdown.',
+    '- Be concise. Signal is not a document editor.',
+    '- Plain text only — no markdown, no bullet asterisks. Signal does not render markdown.',
     '- If a task will take time, send a brief "on it" message before starting.',
     '- When Claude Code output is long, summarize the key points and offer to share the full output.',
     '- Refer to yourself as Green.',
@@ -73,6 +95,14 @@ async function executeToolCall(
     return config.projects
       .map(p => `${p.name}: ${p.description}`)
       .join('\n');
+  }
+
+  if (toolName === 'generate_briefing') {
+    return generateBriefing(config);
+  }
+
+  if (toolName === 'fetch_url') {
+    return fetchUrl(toolInput['url'] as string);
   }
 
   if (toolName === 'run_claude_code') {
@@ -94,7 +124,7 @@ async function executeToolCall(
 
 /**
  * Run one user turn through the agent loop.
- * Returns an array of strings to send back (split for iMessage chunk limits).
+ * Returns an array of strings to send back (split for Signal chunk limits).
  */
 export async function runAgentTurn(
   senderId: string,
@@ -102,7 +132,7 @@ export async function runAgentTurn(
   config: Config,
   client: Anthropic,
 ): Promise<string[]> {
-  const history = histories.get(senderId) ?? [];
+  const history = [...(histories.get(senderId) ?? [])];
   history.push({ role: 'user', content: userMessage });
 
   const systemPrompt = buildSystemPrompt(config);

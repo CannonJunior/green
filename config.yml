@@ -2,25 +2,40 @@ green:
   # Display name used in responses
   name: junior
 
+signal:
+  # TCP address of the signal-cli daemon started with:
+  #   signal-cli -a <account> daemon --tcp 127.0.0.1:7583
+  daemon: "127.0.0.1:7583"
+  # Only messages from these numbers are processed. All others are silently dropped.
+  # Format: E.164, e.g. "+15555550100"
+  approved_numbers: ["+17034708124"]
+
+# Kept for future use if OpenClaw Gateway is needed (e.g. other channels)
 openclaw:
-  # WebSocket address of the running OpenClaw daemon
   gateway: "ws://127.0.0.1:18789"
-  # Path to the workspace dir that OpenClaw reads (symlinked during install)
   workspace: "./workspace"
 
+# Kept for future reference if iMessage is ever revisited
 imessage:
-  # Only messages from these numbers are processed. All others are silently dropped.
-  # Format: E.164 international format, e.g. "+15555550100"
   approved_numbers: []
 
 projects:
   - name: green
     path: /home/junior/src/green
     description: "The Green AI assistant itself"
+  - name: chew
+    path: /home/junior/src/chew
+    description: "All things food to chew on"
+  - name: warchief
+    path: /home/junior/src/warchief
+    description: "A browser based 3D game where you are the Warchief"
+  - name: decor
+    path: /home/junior/src/decor
+    description: ""
 
 claude_code:
   # Path to the claude CLI binary. Defaults to $PATH lookup.
-  binary: claude
+  binary: /home/junior/.nvm/versions/node/v22.19.0/bin/claude
   # Kill the claude process after this many milliseconds
   timeout_ms: 300000
   # Split responses longer than this into multiple iMessages
@@ -35,3 +50,7 @@ inference:
   # Anthropic model used for the Green agent itself
   model: claude-sonnet-4-6
   max_tokens: 8192
+
+chew:
+  # Base URL of the running Chew web app
+  url: "http://localhost:8983"

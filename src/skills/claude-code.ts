@@ -72,7 +72,7 @@ export async function runClaudeCode(
   });
 }
 
-/** Summarise a ClaudeCodeResult into a short status prefix for iMessage. */
+/** Summarise a ClaudeCodeResult into a short status prefix for Signal. */
 export function formatResult(result: ClaudeCodeResult): string {
   const status = result.success ? 'Done' : 'Error';
   const elapsed = (result.duration_ms / 1000).toFixed(1);

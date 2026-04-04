@@ -12,6 +12,11 @@ export interface Config {
   green: {
     name: string;
   };
+  signal: {
+    /** TCP address of the signal-cli daemon, e.g. "127.0.0.1:7583" */
+    daemon: string;
+    approved_numbers: string[];
+  };
   openclaw: {
     gateway: string;
     workspace: string;
@@ -30,6 +35,9 @@ export interface Config {
   inference: {
     model: string;
     max_tokens: number;
+  };
+  chew: {
+    url: string;
   };
 }
 
