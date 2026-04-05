@@ -25,9 +25,12 @@ export async function runClaudeCode(
   if (skip_permissions) args.push('--dangerously-skip-permissions');
 
   return new Promise(resolve => {
+    // Strip ANTHROPIC_API_KEY so the Claude Code CLI authenticates via the
+    // Pro account login rather than falling back to direct API key usage.
+    const { ANTHROPIC_API_KEY: _, ...subprocessEnv } = process.env;
     const proc = spawn(binary, args, {
       cwd: project.path,
-      env: process.env,
+      env: subprocessEnv,
       // Do not open a tty — claude must run fully non-interactively
       stdio: ['ignore', 'pipe', 'pipe'],
     });

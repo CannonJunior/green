@@ -122,21 +122,28 @@ async function executeToolCall(
   return `Unknown tool: ${toolName}`;
 }
 
+export interface AgentTurnResult {
+  chunks: string[];
+  inputTokens: number;
+  outputTokens: number;
+}
+
 /**
  * Run one user turn through the agent loop.
- * Returns an array of strings to send back (split for Signal chunk limits).
+ * Returns response chunks and accumulated token usage for cost tracking.
  */
 export async function runAgentTurn(
   senderId: string,
   userMessage: string,
   config: Config,
   client: Anthropic,
-): Promise<string[]> {
+): Promise<AgentTurnResult> {
   const history = [...(histories.get(senderId) ?? [])];
   history.push({ role: 'user', content: userMessage });
 
   const systemPrompt = buildSystemPrompt(config);
-  let earlyAcknowledgement: string | null = null;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
 
   // Agentic loop: run until the model stops calling tools
   while (true) {
@@ -148,29 +155,25 @@ export async function runAgentTurn(
       messages: history,
     });
 
+    totalInputTokens += response.usage.input_tokens;
+    totalOutputTokens += response.usage.output_tokens;
+
     // Add the assistant turn to history
     history.push({ role: 'assistant', content: response.content });
 
     if (response.stop_reason === 'end_turn') {
-      // Final text response
       const textBlock = response.content.find(b => b.type === 'text');
       const replyText = textBlock?.type === 'text' ? textBlock.text : '(no response)';
-
       histories.set(senderId, history);
-
-      // If we sent an early acknowledgement, prepend nothing — the caller will
-      // have already sent it. Just return the final answer.
-      return splitForDelivery(replyText, config.claude_code.chunk_size);
+      return {
+        chunks: splitForDelivery(replyText, config.claude_code.chunk_size),
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+      };
     }
 
     if (response.stop_reason === 'tool_use') {
       const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
-
-      // If about to call run_claude_code, surface an early acknowledgement on the
-      // first tool call so the user isn't left waiting in silence.
-      if (!earlyAcknowledgement && toolUseBlocks.some(b => b.name === 'run_claude_code')) {
-        earlyAcknowledgement = 'On it — running Claude Code now...';
-      }
 
       // Execute all tool calls (sequential for now — could be parallelised)
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
@@ -194,7 +197,11 @@ export async function runAgentTurn(
 
     // Unexpected stop reason
     histories.set(senderId, history);
-    return ['(unexpected stop reason: ' + response.stop_reason + ')'];
+    return {
+      chunks: ['(unexpected stop reason: ' + response.stop_reason + ')'],
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+    };
   }
 }
 

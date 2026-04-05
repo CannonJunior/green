@@ -175,6 +175,7 @@ export async function generateBets(client: Anthropic): Promise<string> {
         break;
       }
       continuationCount++;
+      history.push({ role: 'user', content: 'Continue the briefing.' });
       continue;
     }
 

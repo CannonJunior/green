@@ -14,11 +14,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import path from 'node:path';
 import os from 'node:os';
-import { loadConfig, chunkText } from './config.js';
+import { loadConfig, chunkText, getProject } from './config.js';
 import { runAgentTurn, clearHistory } from './agent.js';
+import { runSubprocessAgentTurn, clearSubprocessHistory } from './skills/subprocess-agent.js';
+import { runClaudeCode } from './skills/claude-code.js';
 import { generateBriefing } from './skills/briefing.js';
-import { generateBets } from './skills/bets.js';
-import { generateIpo } from './skills/ipo.js';
 import { processReceiptImage } from './skills/chew/pantry.js';
 import { LocalChannel } from './channels/local.js';
 import { SignalChannel } from './channels/signal.js';
@@ -84,6 +84,7 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
   // Built-in slash commands handled before the agent sees them
   if (cmd === '/reset') {
     clearHistory(senderId);
+    clearSubprocessHistory(senderId);
     await channel.send(senderId, 'Conversation history cleared.');
     return;
   }
@@ -97,8 +98,28 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
   if (cmd === '/bets') {
     await channel.send(senderId, 'Scanning markets...');
     try {
-      const briefing = await generateBets(client);
-      for (const chunk of chunkText(briefing, config.claude_code.chunk_size)) {
+      const project = getProject(config, 'green') ?? config.projects[0];
+      const result = await runClaudeCode(project, [
+        'Search the web for today\'s stock market performance and write a daily market briefing.',
+        'Find: S&P 500, Nasdaq, and Dow Jones performance today. Top 3-5 gaining and losing stocks with reasons. The dominant macro theme.',
+        '',
+        'Format exactly as follows (plain text, no markdown):',
+        'BETS — [Day, Month DD YYYY]',
+        '',
+        'Markets: S&P 500 [±X.XX%] / Nasdaq [±X.XX%] / Dow [±X.XX%]',
+        '',
+        'Top Movers:',
+        'TICKER (Company Name) [±X.X%] — one-line reason',
+        '(3-5 movers)',
+        '',
+        'Theme: [3-5 word label]',
+        '[1-2 sentence macro explanation]',
+        '',
+        'Takeaway: "[One direct sentence, institutional voice, slightly contrarian when warranted]"',
+        '',
+        'Keep total response under 220 words. Use real data from today. Start immediately with "BETS —".',
+      ].join('\n'), config);
+      for (const chunk of chunkText(result.output, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }
     } catch (err) {
@@ -110,8 +131,25 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
   if (cmd === '/ipo') {
     await channel.send(senderId, 'Researching IPO pipeline...');
     try {
-      const briefing = await generateIpo(client);
-      for (const chunk of chunkText(briefing, config.claude_code.chunk_size)) {
+      const project = getProject(config, 'green') ?? config.projects[0];
+      const result = await runClaudeCode(project, [
+        'Search the web for every IPO expected to price or begin trading in the next 30 days.',
+        'For each: company name, ticker, expected date, price range, sector, lead underwriters, demand signals, and any pre-IPO secondary market prices (EquityZen, Forge Global, etc.).',
+        '',
+        'Start the response with "IPO PIPELINE —" on the first line, then one block per IPO:',
+        '',
+        'Company Name (TICKER)',
+        'Date: [date] — Sector: [sector]',
+        'Range: $X-$Y — Secondary market: $X (source) or N/A',
+        'Predicted open: $X — Predicted day-1 close: $Y',
+        'Demand: [oversubscribed ~Nx / at parity / undersubscribed]',
+        'Comparables: [peer tickers and multiples]',
+        'Call: [one sentence prediction citing key signal]',
+        'Risk: [one sentence downside risk]',
+        '',
+        'Plain text only, no markdown. Blank line between each IPO block.',
+      ].join('\n'), config);
+      for (const chunk of chunkText(result.output, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }
     } catch (err) {
@@ -166,35 +204,54 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
       '  /ipo            — upcoming IPO pipeline with predicted open and day-1 close prices',
       '  /chew           — attach any food image; Green routes it to the right Chew module',
       '',
-      'Chat naturally for everything else:',
+      'Chat naturally for everything else (uses Claude Code Pro quota):',
       '  - Ask questions about code in any configured project',
-      '  - Request changes ("add a README to green")',
-      '  - Debug issues ("why are the tests failing in chew?")',
-      '  - Search the web ("what changed in Node 22?")',
-      '  - Fetch a URL ("summarise https://...")',
-      '  - Ask for a status update ("give me a briefing")',
+      '  - Request changes, debug issues, search the web',
       '',
-      'A daily briefing is also sent automatically at 08:00.',
+      'Prefix any message with "#api " to force Anthropic API processing.',
+      'API messages report token cost at the end of each response.',
     ].join('\n'));
     return;
   }
 
-  // Send a quick acknowledgement for messages that will take time
-  // (the agent will send a more specific one if it decides to call Claude Code)
-  let replied = false;
+  // "#api " prefix — route through Anthropic API, report cost
+  // Pricing: claude-sonnet-4-6 as of April 2026 (verify at console.anthropic.com)
+  const INPUT_COST_PER_TOKEN = 3.00 / 1_000_000;
+  const OUTPUT_COST_PER_TOKEN = 15.00 / 1_000_000;
 
+  if (msg.text.trim().startsWith('#api ')) {
+    const apiMessage = msg.text.trim().slice(5);
+    if (!apiMessage) {
+      await channel.send(senderId, 'Usage: #api <message>');
+      return;
+    }
+    let replied = false;
+    try {
+      const result = await runAgentTurn(senderId, apiMessage, config, client);
+      for (const chunk of result.chunks) {
+        await channel.send(senderId, chunk);
+        replied = true;
+      }
+      const cost = result.inputTokens * INPUT_COST_PER_TOKEN + result.outputTokens * OUTPUT_COST_PER_TOKEN;
+      await channel.send(senderId, `Cost: $${cost.toFixed(4)} (${result.inputTokens} in / ${result.outputTokens} out)`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[green] api agent error:', message);
+      if (!replied) await channel.send(senderId, `API error: ${message}`);
+    }
+    return;
+  }
+
+  // Default — route through Claude Code subprocess (Pro quota, no API cost)
   try {
-    const chunks = await runAgentTurn(senderId, text, config, client);
+    const chunks = await runSubprocessAgentTurn(senderId, msg.text, config);
     for (const chunk of chunks) {
       await channel.send(senderId, chunk);
-      replied = true;
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('[green] agent error:', message);
-    if (!replied) {
-      await channel.send(senderId, `Something went wrong: ${message}`);
-    }
+    console.error('[green] subprocess agent error:', message);
+    await channel.send(senderId, `Something went wrong: ${message}`);
   }
 }
 
