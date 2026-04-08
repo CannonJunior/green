@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { Config, ProjectConfig } from './config.js';
-import { getProject } from './config.js';
+import { chunkText, getProject } from './config.js';
 import { runClaudeCode, formatResult } from './skills/claude-code.js';
 import { fetchUrl } from './skills/web-fetch.js';
 import { generateBriefing } from './skills/briefing.js';
@@ -166,7 +166,7 @@ export async function runAgentTurn(
       const replyText = textBlock?.type === 'text' ? textBlock.text : '(no response)';
       histories.set(senderId, history);
       return {
-        chunks: splitForDelivery(replyText, config.claude_code.chunk_size),
+        chunks: chunkText(replyText, config.claude_code.chunk_size),
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
       };
@@ -175,21 +175,20 @@ export async function runAgentTurn(
     if (response.stop_reason === 'tool_use') {
       const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
 
-      // Execute all tool calls (sequential for now — could be parallelised)
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
-      for (const block of toolUseBlocks) {
-        if (block.type !== 'tool_use') continue;
-        const output = await executeToolCall(
-          block.name,
-          block.input as Record<string, unknown>,
-          config,
-        );
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: block.id,
-          content: output,
-        });
-      }
+      // Execute all tool calls in parallel
+      const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
+        toolUseBlocks
+          .filter(b => b.type === 'tool_use')
+          .map(async block => {
+            if (block.type !== 'tool_use') return null!;
+            const output = await executeToolCall(
+              block.name,
+              block.input as Record<string, unknown>,
+              config,
+            );
+            return { type: 'tool_result' as const, tool_use_id: block.id, content: output };
+          }),
+      );
 
       history.push({ role: 'user', content: toolResults });
       continue;
@@ -218,19 +217,3 @@ export function clearHistory(senderId: string): void {
   histories.delete(senderId);
 }
 
-function splitForDelivery(text: string, chunkSize: number): string[] {
-  if (text.length <= chunkSize) return [text];
-  const chunks: string[] = [];
-  let i = 0;
-  while (i < text.length) {
-    let end = Math.min(i + chunkSize, text.length);
-    if (end < text.length) {
-      const lastNewline = text.lastIndexOf('\n', end);
-      if (lastNewline > i + chunkSize * 0.5) end = lastNewline + 1;
-    }
-    const chunk = text.slice(i, end).trim();
-    if (chunk) chunks.push(chunk);
-    i = end;
-  }
-  return chunks;
-}

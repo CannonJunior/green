@@ -67,6 +67,10 @@ function buildChannel(): Channel {
 
 const channel: Channel = buildChannel();
 
+// Pricing: claude-sonnet-4-6 as of April 2026 (verify at console.anthropic.com)
+const INPUT_COST_PER_TOKEN = 3.00 / 1_000_000;
+const OUTPUT_COST_PER_TOKEN = 15.00 / 1_000_000;
+
 // ---------------------------------------------------------------------------
 // Message handler
 // ---------------------------------------------------------------------------
@@ -170,7 +174,7 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     try {
       // TODO: restore routeChewImage() once modules beyond pantry are implemented.
       // Currently all routes fall back to pantry, so routing is a redundant API call.
-      const result = await processReceiptImage(imagePath, config.chew.url);
+      const result = await processReceiptImage(imagePath, config.chew.url, config);
       console.log('[chew] processReceiptImage returned:', result.slice(0, 120));
       await channel.send(senderId, result);
     } catch (err) {
@@ -215,10 +219,6 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
   }
 
   // "#api " prefix — route through Anthropic API, report cost
-  // Pricing: claude-sonnet-4-6 as of April 2026 (verify at console.anthropic.com)
-  const INPUT_COST_PER_TOKEN = 3.00 / 1_000_000;
-  const OUTPUT_COST_PER_TOKEN = 15.00 / 1_000_000;
-
   if (msg.text.trim().startsWith('#api ')) {
     const apiMessage = msg.text.trim().slice(5);
     if (!apiMessage) {

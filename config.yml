@@ -32,6 +32,9 @@ projects:
   - name: decor
     path: /home/junior/src/decor
     description: ""
+  - name: red
+    path: /home/junior/src/red
+    description: ""
 
 claude_code:
   # Path to the claude CLI binary. Defaults to $PATH lookup.

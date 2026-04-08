@@ -41,25 +41,22 @@ export async function routeChewImage(
   imagePath: string,
 ): Promise<ChewRouterResult> {
   console.log(`[chew/router] reading image: ${imagePath}`);
+  let fileBuffer: Buffer;
   let imageData: string;
   try {
-    imageData = fs.readFileSync(imagePath).toString('base64');
-    console.log(`[chew/router] image read OK (${Math.round(imageData.length * 0.75 / 1024)} KB)`);
+    fileBuffer = fs.readFileSync(imagePath);
+    imageData = fileBuffer.toString('base64');
+    console.log(`[chew/router] image read OK (${Math.round(fileBuffer.length / 1024)} KB)`);
   } catch (err) {
     console.error('[chew/router] failed to read image:', err instanceof Error ? err.message : String(err));
     return { module: 'unknown', confidence: 'low', reason: 'Could not read image file.' };
   }
 
-  // Detect media type from file header
-  const buf = Buffer.alloc(4);
-  const fd = fs.openSync(imagePath, 'r');
-  fs.readSync(fd, buf, 0, 4, 0);
-  fs.closeSync(fd);
-
+  // Detect media type from file header (already in memory — no second read needed)
   let mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' = 'image/jpeg';
-  if (buf[0] === 0x89 && buf[1] === 0x50) mediaType = 'image/png';
-  else if (buf[0] === 0x47 && buf[1] === 0x49) mediaType = 'image/gif';
-  else if (buf[0] === 0x52 && buf[1] === 0x49) mediaType = 'image/webp';
+  if (fileBuffer[0] === 0x89 && fileBuffer[1] === 0x50) mediaType = 'image/png';
+  else if (fileBuffer[0] === 0x47 && fileBuffer[1] === 0x49) mediaType = 'image/gif';
+  else if (fileBuffer[0] === 0x52 && fileBuffer[1] === 0x49) mediaType = 'image/webp';
   console.log(`[chew/router] detected mediaType: ${mediaType}`);
 
   try {

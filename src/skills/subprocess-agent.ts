@@ -6,8 +6,7 @@
  * subprocess is stateless. The last MAX_HISTORY_TURNS exchanges are retained
  * to keep prompt size bounded.
  */
-import { chunkText } from '../config.js';
-import { getProject } from '../config.js';
+import { chunkText, getProject } from '../config.js';
 import { runClaudeCode } from './claude-code.js';
 import type { Config } from '../config.js';
 

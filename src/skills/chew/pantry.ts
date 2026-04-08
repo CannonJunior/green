@@ -1,13 +1,17 @@
 /**
- * Chew Pantry skill — submits a receipt image to Chew's Pantry API,
- * auto-saves the parsed items, and returns a human-readable summary.
+ * Chew Pantry skill — processes a receipt image via the Claude Code subprocess
+ * (Pro quota, no API cost) and saves the parsed items to Chew.
  *
- * Mirrors the "Drag & drop a receipt photo" flow in PantryClient.tsx:
- *   POST /api/pantry/receipts          → parse image → get items
- *   POST /api/pantry/receipts/:id/items → commit items to database
+ * Flow:
+ *   1. POST image to Chew /api/pantry/receipts/record  → get { id, imagePath (absolute) }
+ *   2. runClaudeCode subprocess reads the image → returns JSON items
+ *   3. POST items to Chew /api/pantry/receipts/:id/items
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { runClaudeCode } from '../claude-code.js';
+import { getProject } from '../../config.js';
+import type { Config } from '../../config.js';
 
 interface ParsedItem {
   name: string;
@@ -16,25 +20,24 @@ interface ParsedItem {
   category: string;
 }
 
-interface ReceiptResponse {
+interface RecordResponse {
   id: string;
-  imagePath: string;
-  items: ParsedItem[];
-  warning?: string;
+  imagePath: string; // absolute path on disk
 }
 
 export async function processReceiptImage(
   imagePath: string,
   chewUrl: string,
+  config: Config,
 ): Promise<string> {
   console.log(`[chew/pantry] processReceiptImage imagePath=${imagePath} chewUrl=${chewUrl}`);
-  // Read attachment from signal-cli storage
+
+  // Step 1: Read the attachment and POST to Chew to create the receipt record
   let fileBuffer: Buffer;
   try {
     fileBuffer = fs.readFileSync(imagePath);
     console.log(`[chew/pantry] image read OK (${Math.round(fileBuffer.length / 1024)} KB)`);
   } catch (err) {
-    console.error('[chew/pantry] failed to read image:', err instanceof Error ? err.message : String(err));
     return `Could not read image file: ${err instanceof Error ? err.message : String(err)}`;
   }
 
@@ -45,62 +48,99 @@ export async function processReceiptImage(
     '.png': 'image/png', '.webp': 'image/webp', '.heic': 'image/heic',
   };
   const contentType = mimeTypes[ext] ?? 'image/jpeg';
-  console.log(`[chew/pantry] filename=${filename} ext=${ext} contentType=${contentType}`);
 
-  // POST to Chew's receipt endpoint
   const formData = new FormData();
   formData.append('file', new Blob([new Uint8Array(fileBuffer)], { type: contentType }), filename);
 
-  let receipt: ReceiptResponse;
+  let record: RecordResponse;
   try {
-    console.log(`[chew/pantry] POST ${chewUrl}/api/pantry/receipts`);
-    const res = await fetch(`${chewUrl}/api/pantry/receipts`, {
+    console.log(`[chew/pantry] POST ${chewUrl}/api/pantry/receipts/record`);
+    const res = await fetch(`${chewUrl}/api/pantry/receipts/record`, {
       method: 'POST',
       body: formData,
-      signal: AbortSignal.timeout(600_000), // CPU vision inference can be very slow
+      signal: AbortSignal.timeout(30_000),
     });
-    console.log(`[chew/pantry] POST /api/pantry/receipts → status ${res.status}`);
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      console.error(`[chew/pantry] API error ${res.status}: ${body.slice(0, 200)}`);
-      return `Chew API error ${res.status}: ${body.slice(0, 200)}`;
+      return `Chew record error ${res.status}: ${body.slice(0, 200)}`;
     }
-    receipt = await res.json() as ReceiptResponse;
-    console.log(`[chew/pantry] receipt id=${receipt.id} items=${receipt.items.length} warning=${receipt.warning ?? 'none'}`);
+    record = await res.json() as RecordResponse;
+    console.log(`[chew/pantry] record id=${record.id} imagePath=${record.imagePath}`);
   } catch (err) {
-    console.error('[chew/pantry] fetch error:', err instanceof Error ? err.message : String(err));
-    return `Could not reach Chew at ${chewUrl} — is it running? (${err instanceof Error ? err.message : String(err)})`;
+    return `Could not reach Chew at ${chewUrl}: ${err instanceof Error ? err.message : String(err)}`;
   }
 
-  if (receipt.warning) {
-    return `Chew warning: ${receipt.warning}`;
+  // Step 2: Parse the image via Claude Code subprocess (uses Pro quota)
+  const project =
+    getProject(config, 'chew') ??
+    getProject(config, 'green') ??
+    config.projects[0];
+
+  if (!project) {
+    return 'No project configured — cannot run receipt parser.';
   }
 
-  if (receipt.items.length === 0) {
-    return 'Receipt uploaded but no items were parsed. Check the Pantry tab in Chew to add items manually.';
+  const parsePrompt = [
+    `Read the image at this path: ${record.imagePath}`,
+    '',
+    'Extract every grocery or food item visible on this receipt.',
+    'Return ONLY a JSON array — no markdown, no explanation, no code fences.',
+    'Each element must have exactly these fields:',
+    '  name: string (the item name, cleaned up)',
+    '  quantity: number or null',
+    '  unit: string or null (e.g. "kg", "L", "pack") ',
+    '  category: one of: produce, meat, seafood, dairy, frozen, beverage, pantry, other',
+    '',
+    'Example output:',
+    '[{"name":"Whole Milk","quantity":2,"unit":"L","category":"dairy"},{"name":"Bananas","quantity":null,"unit":null,"category":"produce"}]',
+    '',
+    'If no items are found, return an empty array: []',
+  ].join('\n');
+
+  console.log('[chew/pantry] running Claude Code subprocess for receipt parsing');
+  const result = await runClaudeCode(project, parsePrompt, config);
+
+  if (!result.success) {
+    console.error(`[chew/pantry] subprocess failed (exit ${result.exit_code}): ${result.output.slice(0, 200)}`);
+    return `Receipt saved but parsing failed. Open Chew to add items manually. (${result.output.slice(0, 100)})`;
   }
 
-  // Auto-save parsed items to the database
+  // Extract JSON from output (strip any leading/trailing text)
+  let items: ParsedItem[];
   try {
-    console.log(`[chew/pantry] POST ${chewUrl}/api/pantry/receipts/${receipt.id}/items (${receipt.items.length} items)`);
-    const saveRes = await fetch(`${chewUrl}/api/pantry/receipts/${receipt.id}/items`, {
+    const match = result.output.match(/\[[\s\S]*\]/);
+    if (!match) throw new Error('No JSON array found in output');
+    items = JSON.parse(match[0]) as ParsedItem[];
+  } catch (err) {
+    console.error('[chew/pantry] JSON parse error:', err, '\nOutput:', result.output.slice(0, 300));
+    return `Receipt saved but could not parse items. Open Chew to add items manually.`;
+  }
+
+  console.log(`[chew/pantry] parsed ${items.length} items`);
+
+  if (items.length === 0) {
+    return 'Receipt uploaded but no items were found. Open Chew to add items manually.';
+  }
+
+  // Step 3: Save items to Chew database
+  try {
+    console.log(`[chew/pantry] POST ${chewUrl}/api/pantry/receipts/${record.id}/items (${items.length} items)`);
+    const saveRes = await fetch(`${chewUrl}/api/pantry/receipts/${record.id}/items`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: receipt.items }),
+      body: JSON.stringify({ items }),
       signal: AbortSignal.timeout(15_000),
     });
-    console.log(`[chew/pantry] save items → status ${saveRes.status}`);
     if (!saveRes.ok) {
       return `Items parsed but save failed (${saveRes.status}). Open Chew to review.`;
     }
   } catch (err) {
-    console.error('[chew/pantry] save error:', err instanceof Error ? err.message : String(err));
     return `Items parsed but save failed: ${err instanceof Error ? err.message : String(err)}`;
   }
 
   // Format summary grouped by category
   const byCategory = new Map<string, string[]>();
-  for (const item of receipt.items) {
+  for (const item of items) {
     const cat = item.category ?? 'other';
     if (!byCategory.has(cat)) byCategory.set(cat, []);
     const qty = item.quantity != null
@@ -110,11 +150,11 @@ export async function processReceiptImage(
   }
 
   const categoryOrder = ['produce', 'meat', 'seafood', 'dairy', 'frozen', 'beverage', 'pantry', 'other'];
-  const lines: string[] = [`Pantry updated — ${receipt.items.length} items saved to Chew.`];
+  const lines: string[] = [`Pantry updated — ${items.length} items saved to Chew.`];
   for (const cat of categoryOrder) {
-    const items = byCategory.get(cat);
-    if (items?.length) {
-      lines.push(`${cat.charAt(0).toUpperCase() + cat.slice(1)}: ${items.join(', ')}`);
+    const itemList = byCategory.get(cat);
+    if (itemList?.length) {
+      lines.push(`${cat.charAt(0).toUpperCase() + cat.slice(1)}: ${itemList.join(', ')}`);
     }
   }
 
