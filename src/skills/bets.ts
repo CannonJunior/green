@@ -119,7 +119,7 @@ Then write the briefing exactly per the format in your instructions.`;
 
 const MAX_CONTINUATIONS = 3;
 
-export async function generateBets(client: Anthropic): Promise<string> {
+export async function generateBets(client: Anthropic, model: string): Promise<string> {
   const history: Anthropic.MessageParam[] = [
     { role: 'user', content: INITIAL_PROMPT },
   ];
@@ -130,7 +130,7 @@ export async function generateBets(client: Anthropic): Promise<string> {
 
   while (true) {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model,
       max_tokens: 4096,
       system: SYSTEM_PROMPT,
       tools: TOOLS,

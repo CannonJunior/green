@@ -14,12 +14,15 @@
 import Anthropic from '@anthropic-ai/sdk';
 import path from 'node:path';
 import os from 'node:os';
-import { loadConfig, chunkText, getProject } from './config.js';
+import { loadConfig, chunkText } from './config.js';
 import { runAgentTurn, clearHistory } from './agent.js';
 import { runSubprocessAgentTurn, clearSubprocessHistory } from './skills/subprocess-agent.js';
-import { runClaudeCode } from './skills/claude-code.js';
 import { generateBriefing } from './skills/briefing.js';
+import { generateBets } from './skills/bets.js';
+import { generateIpo } from './skills/ipo.js';
+import { routeChewImage } from './skills/chew/router.js';
 import { processReceiptImage } from './skills/chew/pantry.js';
+import { processEquipmentImage } from './skills/chew/equipment.js';
 import { LocalChannel } from './channels/local.js';
 import { SignalChannel } from './channels/signal.js';
 import { GatewayChannel } from './channels/gateway.js';
@@ -102,28 +105,8 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
   if (cmd === '/bets') {
     await channel.send(senderId, 'Scanning markets...');
     try {
-      const project = getProject(config, 'green') ?? config.projects[0];
-      const result = await runClaudeCode(project, [
-        'Search the web for today\'s stock market performance and write a daily market briefing.',
-        'Find: S&P 500, Nasdaq, and Dow Jones performance today. Top 3-5 gaining and losing stocks with reasons. The dominant macro theme.',
-        '',
-        'Format exactly as follows (plain text, no markdown):',
-        'BETS — [Day, Month DD YYYY]',
-        '',
-        'Markets: S&P 500 [±X.XX%] / Nasdaq [±X.XX%] / Dow [±X.XX%]',
-        '',
-        'Top Movers:',
-        'TICKER (Company Name) [±X.X%] — one-line reason',
-        '(3-5 movers)',
-        '',
-        'Theme: [3-5 word label]',
-        '[1-2 sentence macro explanation]',
-        '',
-        'Takeaway: "[One direct sentence, institutional voice, slightly contrarian when warranted]"',
-        '',
-        'Keep total response under 220 words. Use real data from today. Start immediately with "BETS —".',
-      ].join('\n'), config);
-      for (const chunk of chunkText(result.output, config.claude_code.chunk_size)) {
+      const text = await generateBets(client, config.inference.model);
+      for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }
     } catch (err) {
@@ -135,25 +118,8 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
   if (cmd === '/ipo') {
     await channel.send(senderId, 'Researching IPO pipeline...');
     try {
-      const project = getProject(config, 'green') ?? config.projects[0];
-      const result = await runClaudeCode(project, [
-        'Search the web for every IPO expected to price or begin trading in the next 30 days.',
-        'For each: company name, ticker, expected date, price range, sector, lead underwriters, demand signals, and any pre-IPO secondary market prices (EquityZen, Forge Global, etc.).',
-        '',
-        'Start the response with "IPO PIPELINE —" on the first line, then one block per IPO:',
-        '',
-        'Company Name (TICKER)',
-        'Date: [date] — Sector: [sector]',
-        'Range: $X-$Y — Secondary market: $X (source) or N/A',
-        'Predicted open: $X — Predicted day-1 close: $Y',
-        'Demand: [oversubscribed ~Nx / at parity / undersubscribed]',
-        'Comparables: [peer tickers and multiples]',
-        'Call: [one sentence prediction citing key signal]',
-        'Risk: [one sentence downside risk]',
-        '',
-        'Plain text only, no markdown. Blank line between each IPO block.',
-      ].join('\n'), config);
-      for (const chunk of chunkText(result.output, config.claude_code.chunk_size)) {
+      const text = await generateIpo(client, config.inference.model);
+      for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }
     } catch (err) {
@@ -170,16 +136,46 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     }
     const imagePath = resolveAttachmentPath(attachment.storedFilename);
     console.log(`[chew] storedFilename=${attachment.storedFilename} imagePath=${imagePath}`);
-    await channel.send(senderId, 'Analysing image...');
+    await channel.send(senderId, 'Classifying image...');
     try {
-      // TODO: restore routeChewImage() once modules beyond pantry are implemented.
-      // Currently all routes fall back to pantry, so routing is a redundant API call.
-      const result = await processReceiptImage(imagePath, config.chew.url, config);
-      console.log('[chew] processReceiptImage returned:', result.slice(0, 120));
-      await channel.send(senderId, result);
+      const route = await routeChewImage(client, imagePath);
+      console.log(`[chew] routed to module=${route.module} confidence=${route.confidence}`);
+      if (route.module === 'kitchen') {
+        await channel.send(senderId, 'Kitchen equipment detected — identifying...');
+        const result = await processEquipmentImage(imagePath, config.chew.url, config);
+        await channel.send(senderId, result);
+      } else {
+        // pantry, recipes, wiki, yeschef, unknown — fall through to receipt processing
+        if (route.module !== 'pantry') {
+          await channel.send(senderId, `Treating as pantry (detected: ${route.module}, ${route.reason})`);
+        }
+        await channel.send(senderId, 'Processing receipt...');
+        const result = await processReceiptImage(imagePath, config.chew.url, config);
+        await channel.send(senderId, result);
+      }
     } catch (err) {
       console.error('[chew] error:', err instanceof Error ? err.message : String(err));
       await channel.send(senderId, `Chew failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
+  if (cmd === '/equipment') {
+    const attachment = msg.attachments?.[0];
+    if (!attachment) {
+      await channel.send(senderId, 'No attachment found. Send /equipment with a photo of a kitchen item.');
+      return;
+    }
+    const imagePath = resolveAttachmentPath(attachment.storedFilename);
+    console.log(`[equipment] storedFilename=${attachment.storedFilename} imagePath=${imagePath}`);
+    await channel.send(senderId, 'Identifying kitchen equipment...');
+    try {
+      const result = await processEquipmentImage(imagePath, config.chew.url, config);
+      console.log('[equipment] processEquipmentImage returned:', result.slice(0, 120));
+      await channel.send(senderId, result);
+    } catch (err) {
+      console.error('[equipment] error:', err instanceof Error ? err.message : String(err));
+      await channel.send(senderId, `Equipment failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     return;
   }
@@ -207,6 +203,7 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
       '  /bets           — daily market briefing: top movers, macro theme, key takeaway',
       '  /ipo            — upcoming IPO pipeline with predicted open and day-1 close prices',
       '  /chew           — attach any food image; Green routes it to the right Chew module',
+      '  /equipment      — attach a kitchen equipment photo to identify and add it to Chew',
       '',
       'Chat naturally for everything else (uses Claude Code Pro quota):',
       '  - Ask questions about code in any configured project',

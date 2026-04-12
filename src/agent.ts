@@ -173,21 +173,20 @@ export async function runAgentTurn(
     }
 
     if (response.stop_reason === 'tool_use') {
-      const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
+      const toolUseBlocks = response.content.filter(
+        (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
+      );
 
       // Execute all tool calls in parallel
       const toolResults: Anthropic.ToolResultBlockParam[] = await Promise.all(
-        toolUseBlocks
-          .filter(b => b.type === 'tool_use')
-          .map(async block => {
-            if (block.type !== 'tool_use') return null!;
-            const output = await executeToolCall(
-              block.name,
-              block.input as Record<string, unknown>,
-              config,
-            );
-            return { type: 'tool_result' as const, tool_use_id: block.id, content: output };
-          }),
+        toolUseBlocks.map(async block => {
+          const output = await executeToolCall(
+            block.name,
+            block.input as Record<string, unknown>,
+            config,
+          );
+          return { type: 'tool_result' as const, tool_use_id: block.id, content: output };
+        }),
       );
 
       history.push({ role: 'user', content: toolResults });
@@ -202,14 +201,6 @@ export async function runAgentTurn(
       outputTokens: totalOutputTokens,
     };
   }
-}
-
-/** Return the early acknowledgement if set, so the channel can send it immediately. */
-export function getEarlyAck(senderId: string, _config: Config): string | null {
-  // Not stored — the agent loop emits it inline. This hook exists for channels
-  // that want to split the "working..." ping from the final answer.
-  void senderId;
-  return null;
 }
 
 /** Clear conversation history for a sender (e.g. on "/reset" command). */

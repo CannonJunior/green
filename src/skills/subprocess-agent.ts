@@ -6,9 +6,8 @@
  * subprocess is stateless. The last MAX_HISTORY_TURNS exchanges are retained
  * to keep prompt size bounded.
  */
-import { chunkText, getProject } from '../config.js';
+import { chunkText, getProject, type Config } from '../config.js';
 import { runClaudeCode } from './claude-code.js';
-import type { Config } from '../config.js';
 
 const MAX_HISTORY_TURNS = 10;
 
@@ -76,10 +75,10 @@ export async function runSubprocessAgentTurn(
   const result = await runClaudeCode(project, prompt, config);
   const responseText = result.output || '(no response)';
 
-  // Update history
+  // Update history, keeping only the most recent turns to bound memory usage
   history.push({ role: 'user', content: userMessage });
   history.push({ role: 'assistant', content: responseText });
-  histories.set(senderId, history);
+  histories.set(senderId, history.slice(-(MAX_HISTORY_TURNS * 2)));
 
   return chunkText(responseText, config.claude_code.chunk_size);
 }

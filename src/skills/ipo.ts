@@ -134,7 +134,7 @@ Then write the briefing exactly per the format in your instructions, with a pred
 
 const MAX_CONTINUATIONS = 5;
 
-export async function generateIpo(client: Anthropic): Promise<string> {
+export async function generateIpo(client: Anthropic, model: string): Promise<string> {
   const history: Anthropic.MessageParam[] = [
     { role: 'user', content: INITIAL_PROMPT },
   ];
@@ -144,7 +144,7 @@ export async function generateIpo(client: Anthropic): Promise<string> {
 
   while (true) {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model,
       max_tokens: 4096,
       system: SYSTEM_PROMPT,
       tools: TOOLS,
