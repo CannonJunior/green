@@ -1,6 +1,8 @@
 green:
   # Display name used in responses
   name: junior
+  # Default location used by /best when no location is given in the command
+  location: "Arlington, VA"
 
 signal:
   # TCP address of the signal-cli daemon started with:
@@ -23,6 +25,12 @@ projects:
   - name: green
     path: /home/junior/src/green
     description: "The Green AI assistant itself"
+  - name: best
+    path: /home/junior/src/best
+    description: "Shows the best things occurring at the present location"
+  - name: bets
+    path: /home/junior/src/bets
+    description: "Provides financial market summaries"
   - name: chew
     path: /home/junior/src/chew
     description: "All things food to chew on"
@@ -31,10 +39,19 @@ projects:
     description: "A browser based 3D game where you are the Warchief"
   - name: decor
     path: /home/junior/src/decor
-    description: ""
+    description: "A browser application for the home"
   - name: red
     path: /home/junior/src/red
-    description: ""
+    description: "Robobrain"
+  - name: yellow
+    path: /home/junior/src/yellow
+    description: "Private"
+  - name: blue
+    path: /home/junior/src/blue
+    description: "Framework for iOS application to integrate with Siri and iOS"
+  - name: log
+    path: /home/junior/src/log
+    description: "Personal log with image and GPS support"
 
 claude_code:
   # Path to the claude CLI binary. Defaults to $PATH lookup.
@@ -57,3 +74,9 @@ inference:
 chew:
   # Base URL of the running Chew web app
   url: "http://localhost:8983"
+
+mobile:
+  # Port the Blue iOS app connects to. Start Green with: npm run dev -- --channel mobile
+  port: 9002
+  # Generate a strong token with: openssl rand -hex 32
+  token: "change-me-to-a-long-random-string"

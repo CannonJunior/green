@@ -14,18 +14,19 @@
 import Anthropic from '@anthropic-ai/sdk';
 import path from 'node:path';
 import os from 'node:os';
-import { loadConfig, chunkText } from './config.js';
+import { loadConfig, chunkText, getProject } from './config.js';
+import { runClaudeCode } from './skills/claude-code.js';
 import { runAgentTurn, clearHistory } from './agent.js';
 import { runSubprocessAgentTurn, clearSubprocessHistory } from './skills/subprocess-agent.js';
 import { generateBriefing } from './skills/briefing.js';
-import { generateBets } from './skills/bets.js';
-import { generateIpo } from './skills/ipo.js';
-import { routeChewImage } from './skills/chew/router.js';
-import { processReceiptImage } from './skills/chew/pantry.js';
-import { processEquipmentImage } from './skills/chew/equipment.js';
+import { generateBets, generateIpo } from 'bets';
+import { generateBest, getDefaultLocation, setDefaultLocation, isValidZipCode } from 'best';
+import { routeChewImage, processReceiptImage, processEquipmentImage } from 'chew';
+import { addEntry, summarizeEntries, searchEntries } from 'log';
 import { LocalChannel } from './channels/local.js';
 import { SignalChannel } from './channels/signal.js';
 import { GatewayChannel } from './channels/gateway.js';
+import { MobileChannel } from './channels/mobile.js';
 import type { Channel, IncomingMessage } from './channels/types.js';
 
 // ---------------------------------------------------------------------------
@@ -62,6 +63,11 @@ function buildChannel(): Channel {
       return new LocalChannel();
     case 'gateway':
       return new GatewayChannel(config.openclaw.gateway, config.imessage.approved_numbers);
+    case 'mobile':
+      return new MobileChannel(
+        config.mobile?.token ?? 'changeme',
+        config.mobile?.port,
+      );
     case 'signal':
     default:
       return new SignalChannel(config.signal.daemon, config.signal.approved_numbers);
@@ -105,7 +111,7 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
   if (cmd === '/bets') {
     await channel.send(senderId, 'Scanning markets...');
     try {
-      const text = await generateBets(client, config.inference.model);
+      const text = await generateBets(apiKey!, config.inference.model);
       for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }
@@ -115,15 +121,78 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     return;
   }
 
-  if (cmd === '/ipo') {
-    await channel.send(senderId, 'Researching IPO pipeline...');
+  if (cmd === '/ipo' || cmd.startsWith('/ipo ')) {
+    const ipoArg = msg.text.trim().slice('/ipo'.length).trim();
+    let ipoDate: string | undefined;
+    if (ipoArg.startsWith('-d ')) {
+      const dateStr = ipoArg.slice('-d '.length).trim().split(/\s/)[0];
+      if (/^\d{8}$/.test(dateStr)) {
+        ipoDate = dateStr;
+      } else {
+        await channel.send(senderId, 'Invalid date format. Use: /ipo -d YYYYMMDD');
+        return;
+      }
+    }
+    const statusMsg = ipoDate
+      ? `Researching IPOs on or about ${ipoDate.slice(0, 4)}-${ipoDate.slice(4, 6)}-${ipoDate.slice(6, 8)}...`
+      : 'Researching IPO pipeline...';
+    await channel.send(senderId, statusMsg);
     try {
-      const text = await generateIpo(client, config.inference.model);
+      const text = await generateIpo(apiKey!, config.inference.model, ipoDate);
       for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }
     } catch (err) {
       await channel.send(senderId, `IPO lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
+  if (cmd === '/best' || cmd.startsWith('/best ')) {
+    const arg = msg.text.trim().slice('/best'.length).trim();
+
+    if (arg.startsWith('-default ')) {
+      const zip = arg.slice('-default '.length).trim();
+      if (!isValidZipCode(zip)) {
+        await channel.send(senderId, 'Invalid zip code. Use 5 digits: /best -default 22201');
+        return;
+      }
+      setDefaultLocation(zip);
+      await channel.send(senderId, `Default location set to ${zip}.`);
+      return;
+    }
+
+    let dateContext: string | undefined;
+    let locationArg = arg;
+
+    const dFlagMatch = arg.match(/(^|\s)-d\s+(\d{8})(\s|$)/);
+    if (dFlagMatch) {
+      const raw = dFlagMatch[2];
+      const year = parseInt(raw.slice(0, 4), 10);
+      const month = parseInt(raw.slice(4, 6), 10) - 1;
+      const day = parseInt(raw.slice(6, 8), 10);
+      const date = new Date(year, month, day);
+      if (isNaN(date.getTime()) || date.getMonth() !== month) {
+        await channel.send(senderId, 'Invalid date. Use YYYYMMDD format: /best -d 20260418');
+        return;
+      }
+      dateContext = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+      locationArg = arg.replace(dFlagMatch[0], dFlagMatch[1]).trim();
+    }
+
+    const location = locationArg || getDefaultLocation() || config.green.location || '';
+    if (!location) {
+      await channel.send(senderId, 'No default set. Use /best <zip> or set one with /best -default 22201');
+      return;
+    }
+    await channel.send(senderId, `Searching for the best of ${location}...`);
+    try {
+      const text = await generateBest(client, config.inference.model, location, dateContext);
+      for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
+        await channel.send(senderId, chunk);
+      }
+    } catch (err) {
+      await channel.send(senderId, `/best failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     return;
   }
@@ -138,19 +207,20 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     console.log(`[chew] storedFilename=${attachment.storedFilename} imagePath=${imagePath}`);
     await channel.send(senderId, 'Classifying image...');
     try {
-      const route = await routeChewImage(client, imagePath);
+      const chewProject = getProject(config, 'chew') ?? getProject(config, 'green') ?? config.projects[0];
+      const runPrompt = (prompt: string) => runClaudeCode(chewProject!, prompt, config);
+      const route = await routeChewImage(apiKey!, imagePath);
       console.log(`[chew] routed to module=${route.module} confidence=${route.confidence}`);
       if (route.module === 'kitchen') {
         await channel.send(senderId, 'Kitchen equipment detected — identifying...');
-        const result = await processEquipmentImage(imagePath, config.chew.url, config);
+        const result = await processEquipmentImage(imagePath, config.chew.url, runPrompt);
         await channel.send(senderId, result);
       } else {
-        // pantry, recipes, wiki, yeschef, unknown — fall through to receipt processing
         if (route.module !== 'pantry') {
           await channel.send(senderId, `Treating as pantry (detected: ${route.module}, ${route.reason})`);
         }
         await channel.send(senderId, 'Processing receipt...');
-        const result = await processReceiptImage(imagePath, config.chew.url, config);
+        const result = await processReceiptImage(imagePath, config.chew.url, runPrompt);
         await channel.send(senderId, result);
       }
     } catch (err) {
@@ -170,12 +240,163 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     console.log(`[equipment] storedFilename=${attachment.storedFilename} imagePath=${imagePath}`);
     await channel.send(senderId, 'Identifying kitchen equipment...');
     try {
-      const result = await processEquipmentImage(imagePath, config.chew.url, config);
+      const chewProject = getProject(config, 'chew') ?? getProject(config, 'green') ?? config.projects[0];
+      const runPrompt = (prompt: string) => runClaudeCode(chewProject!, prompt, config);
+      const result = await processEquipmentImage(imagePath, config.chew.url, runPrompt);
       console.log('[equipment] processEquipmentImage returned:', result.slice(0, 120));
       await channel.send(senderId, result);
     } catch (err) {
       console.error('[equipment] error:', err instanceof Error ? err.message : String(err));
       await channel.send(senderId, `Equipment failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
+  if (cmd === '/morning') {
+    await channel.send(senderId, 'Good morning. Preparing your briefing...');
+    try {
+      const health = msg.metadata as {
+        sleep_hours?: number;
+        hrv?: number;
+        steps_yesterday?: number;
+        resting_hr?: number;
+      } | undefined;
+
+      const healthLines: string[] = [];
+      if (health?.sleep_hours != null) healthLines.push(`Sleep: ${health.sleep_hours.toFixed(1)}h`);
+      if (health?.hrv != null) healthLines.push(`HRV: ${Math.round(health.hrv)}ms`);
+      if (health?.steps_yesterday != null) healthLines.push(`Steps yesterday: ${Math.round(health.steps_yesterday).toLocaleString()}`);
+      if (health?.resting_hr != null) healthLines.push(`Resting HR: ${Math.round(health.resting_hr)}bpm`);
+
+      const healthContext = healthLines.length > 0
+        ? `Health data from iPhone: ${healthLines.join(', ')}.`
+        : '';
+
+      const location = config.green.location ?? 'my area';
+      const prompt = [
+        `Generate a concise, friendly morning briefing for ${config.green.name}.`,
+        healthContext,
+        `Search for current weather in ${location} and briefly note anything locally relevant today.`,
+        'Keep the total response to 4–6 sentences. Conversational, not bullet points.',
+      ].filter(Boolean).join(' ');
+
+      const result = await runAgentTurn(senderId, prompt, config, client);
+      for (const chunk of result.chunks) {
+        await channel.send(senderId, chunk);
+      }
+    } catch (err) {
+      await channel.send(senderId, `Morning briefing failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
+  if (cmd === '/clip' || cmd.startsWith('/clip ')) {
+    const clipContent = (msg.metadata as { content?: string } | undefined)?.content
+      ?? msg.text.trim().slice('/clip'.length).trim();
+
+    if (!clipContent) {
+      await channel.send(senderId, 'Usage: /clip <content>  or send clipboard via the Blue app.');
+      return;
+    }
+
+    await channel.send(senderId, 'Processing...');
+    try {
+      const prompt = [
+        'The user sent this content from their clipboard. Identify what it is and do something useful:',
+        '- URL → fetch and summarize in 5 bullets with a one-sentence verdict',
+        '- Address → find what\'s nearby and any upcoming events',
+        '- Code snippet → explain what it does concisely',
+        '- Recipe → check against the Chew pantry and note what\'s missing',
+        '- Any other text → summarize and extract the key points',
+        '',
+        `Content:\n${clipContent}`,
+      ].join('\n');
+
+      const result = await runAgentTurn(senderId, prompt, config, client);
+      for (const chunk of result.chunks) {
+        await channel.send(senderId, chunk);
+      }
+    } catch (err) {
+      await channel.send(senderId, `Clip failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
+  if (cmd === '/mood' || cmd.startsWith('/mood ')) {
+    const moodArg = msg.text.trim().slice('/mood'.length).trim();
+    if (!moodArg) {
+      await channel.send(senderId, 'Usage: /mood <1–5 or emoji> [note]  e.g. /mood 4 great run this morning');
+      return;
+    }
+    try {
+      const result = await addEntry(`Mood: ${moodArg}`);
+      await channel.send(senderId, result.message.replace('Logged.', `Mood logged: ${moodArg}.`));
+    } catch (err) {
+      await channel.send(senderId, `Mood log failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
+  if (cmd === '/log' || cmd.startsWith('/log ')) {
+    const arg = msg.text.trim().slice('/log'.length).trim();
+
+    // Summarize sub-commands
+    if (arg === 'today' || arg === 'week' || arg === 'month') {
+      await channel.send(senderId, `Summarizing ${arg}'s entries...`);
+      try {
+        const summary = await summarizeEntries(apiKey!, config.inference.model, arg as 'today' | 'week' | 'month');
+        await channel.send(senderId, summary);
+      } catch (err) {
+        await channel.send(senderId, `Log summary failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
+    // Search sub-command
+    if (arg.startsWith('search ')) {
+      const query = arg.slice('search '.length).trim();
+      if (!query) {
+        await channel.send(senderId, 'Usage: /log search <term>');
+        return;
+      }
+      await channel.send(senderId, 'Searching log...');
+      try {
+        const results = await searchEntries(apiKey!, config.inference.model, query);
+        await channel.send(senderId, results);
+      } catch (err) {
+        await channel.send(senderId, `Log search failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
+    // Map sub-command
+    if (arg === 'map') {
+      await channel.send(senderId, 'Map: http://localhost:9001 (run "npm run map" in Project Log to start)');
+      return;
+    }
+
+    // Add entry: optional text + optional image attachment
+    const text = arg || null;
+    const attachment = msg.attachments?.[0];
+    const imagePath = attachment ? resolveAttachmentPath(attachment.storedFilename) : undefined;
+
+    if (!text && !imagePath) {
+      await channel.send(senderId, [
+        'Usage:',
+        '  /log <text>          — add a text entry',
+        '  /log <text> + image  — add entry with image (attach to message)',
+        '  /log today/week/month — summarize entries',
+        '  /log search <term>   — search entries',
+        '  /log map             — map URL for geotagged images',
+      ].join('\n'));
+      return;
+    }
+
+    try {
+      const result = await addEntry(text, imagePath);
+      await channel.send(senderId, result.message);
+    } catch (err) {
+      await channel.send(senderId, `Log failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     return;
   }
@@ -201,9 +422,17 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
       '  /briefing       — instant system briefing: git activity (24h), service',
       '                    health, disk usage, and uptime across all projects',
       '  /bets           — daily market briefing: top movers, macro theme, key takeaway',
-      '  /ipo            — upcoming IPO pipeline with predicted open and day-1 close prices',
+      '  /ipo [-d YYYYMMDD] — upcoming IPO pipeline with predicted open and day-1 close prices; -d searches IPOs on or about a specific date',
+      '  /best [place] [-d YYYYMMDD]   — best things to do and upcoming events at a location; -d sets the target date',
+      '  /morning        — personalized morning briefing (weather + health + local)',
+      '  /clip [text]    — AI processes clipboard: URL→summary, code→explain, address→nearby',
+      '  /mood <1-5>     — log your current mood with an optional note',
       '  /chew           — attach any food image; Green routes it to the right Chew module',
       '  /equipment      — attach a kitchen equipment photo to identify and add it to Chew',
+      '  /log [text]     — add a personal log entry (attach image for GPS tagging)',
+      '  /log today|week|month — AI summary of log entries',
+      '  /log search <q> — search log entries',
+      '  /log map        — interactive map URL for geotagged images',
       '',
       'Chat naturally for everything else (uses Claude Code Pro quota):',
       '  - Ask questions about code in any configured project',

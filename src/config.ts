@@ -11,6 +11,8 @@ export interface ProjectConfig {
 export interface Config {
   green: {
     name: string;
+    /** Default location used by /best when no argument is given, e.g. "Arlington, VA" */
+    location?: string;
   };
   signal: {
     /** TCP address of the signal-cli daemon, e.g. "127.0.0.1:7583" */
@@ -38,6 +40,12 @@ export interface Config {
   };
   chew: {
     url: string;
+  };
+  mobile?: {
+    /** TCP port for the Blue iOS app HTTP channel. Default: 9002 */
+    port: number;
+    /** Bearer token the iOS app must send in the Authorization header */
+    token: string;
   };
 }
 

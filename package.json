@@ -17,6 +17,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
+    "best": "file:../best",
+    "bets": "file:../bets",
+    "chew": "file:../chew/green",
+    "log": "file:../log",
     "js-yaml": "^4.1.0",
     "ws": "^8.18.0"
   },

@@ -10,7 +10,7 @@ const histories = new Map<string, Anthropic.MessageParam[]>();
 
 const TOOLS: Anthropic.Messages.ToolUnion[] = [
   {
-    type: 'web_search_20250305',
+    type: 'web_search_20260209',
     name: 'web_search',
   },
   {

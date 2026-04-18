@@ -15,10 +15,12 @@ export interface Attachment {
 }
 
 export interface IncomingMessage {
-  /** Stable identifier for the sender: phone number (E.164) or "local" */
+  /** Stable identifier for the sender: phone number (E.164), "local", or a mobile request ID */
   senderId: string;
   text: string;
   attachments?: Attachment[];
+  /** Structured data from non-Signal channels (e.g. HealthKit payload from the Blue iOS app) */
+  metadata?: Record<string, unknown>;
 }
 
 export interface Channel {
