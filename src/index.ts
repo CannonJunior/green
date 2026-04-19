@@ -19,8 +19,9 @@ import { runClaudeCode } from './skills/claude-code.js';
 import { runAgentTurn, clearHistory } from './agent.js';
 import { runSubprocessAgentTurn, clearSubprocessHistory } from './skills/subprocess-agent.js';
 import { generateBriefing } from './skills/briefing.js';
-import { generateBets, generateIpo } from 'bets';
+import { generateBets, generateIpo, generateIpoSymbols } from 'bets';
 import { generateBest, getDefaultLocation, setDefaultLocation, isValidZipCode } from 'best';
+import { generateTrip, getDefaultOrigin, setDefaultOrigin } from 'trip';
 import { routeChewImage, processReceiptImage, processEquipmentImage } from 'chew';
 import { addEntry, summarizeEntries, searchEntries } from 'log';
 import { LocalChannel } from './channels/local.js';
@@ -123,6 +124,22 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
 
   if (cmd === '/ipo' || cmd.startsWith('/ipo ')) {
     const ipoArg = msg.text.trim().slice('/ipo'.length).trim();
+
+    // -symbols / -s: return compact ticker list only
+    if (ipoArg === '-symbols' || ipoArg === '-s') {
+      await channel.send(senderId, 'Fetching upcoming IPO symbols...');
+      try {
+        const text = await generateIpoSymbols(apiKey!, config.inference.model);
+        for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
+          await channel.send(senderId, chunk);
+        }
+      } catch (err) {
+        await channel.send(senderId, `/ipo -symbols failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
+    // -d YYYYMMDD: full pipeline for a specific date
     let ipoDate: string | undefined;
     if (ipoArg.startsWith('-d ')) {
       const dateStr = ipoArg.slice('-d '.length).trim().split(/\s/)[0];
@@ -133,12 +150,25 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
         return;
       }
     }
-    const statusMsg = ipoDate
-      ? `Researching IPOs on or about ${ipoDate.slice(0, 4)}-${ipoDate.slice(4, 6)}-${ipoDate.slice(6, 8)}...`
-      : 'Researching IPO pipeline...';
+
+    // bare tickers: /ipo OKLO or /ipo OKLO,TSLA
+    let ipoSymbols: string[] | undefined;
+    if (!ipoDate && ipoArg) {
+      const symbols = ipoArg.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      if (symbols.length > 0) ipoSymbols = symbols;
+    }
+
+    let statusMsg: string;
+    if (ipoSymbols) {
+      statusMsg = `Researching IPO${ipoSymbols.length > 1 ? 's' : ''}: ${ipoSymbols.join(', ')}...`;
+    } else if (ipoDate) {
+      statusMsg = `Researching IPOs on or about ${ipoDate.slice(0, 4)}-${ipoDate.slice(4, 6)}-${ipoDate.slice(6, 8)}...`;
+    } else {
+      statusMsg = 'Researching IPO pipeline...';
+    }
     await channel.send(senderId, statusMsg);
     try {
-      const text = await generateIpo(apiKey!, config.inference.model, ipoDate);
+      const text = await generateIpo(apiKey!, config.inference.model, ipoDate, ipoSymbols);
       for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }
@@ -401,6 +431,57 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     return;
   }
 
+  if (cmd === '/trip' || cmd.startsWith('/trip ')) {
+    const arg = msg.text.trim().slice('/trip'.length).trim();
+
+    if (arg.startsWith('-default ')) {
+      const zip = arg.slice('-default '.length).trim();
+      if (!isValidZipCode(zip)) {
+        await channel.send(senderId, 'Invalid zip code. Use 5 digits: /trip -default 22101');
+        return;
+      }
+      setDefaultOrigin(zip);
+      await channel.send(senderId, `Default origin set to ${zip}.`);
+      return;
+    }
+
+    let dateContext: string | undefined;
+    let locationArg = arg;
+
+    const dFlagMatch = arg.match(/(^|\s)-d\s+(\d{8})(\s|$)/);
+    if (dFlagMatch) {
+      const raw = dFlagMatch[2];
+      const year = parseInt(raw.slice(0, 4), 10);
+      const month = parseInt(raw.slice(4, 6), 10) - 1;
+      const day = parseInt(raw.slice(6, 8), 10);
+      const date = new Date(year, month, day);
+      if (isNaN(date.getTime()) || date.getMonth() !== month) {
+        await channel.send(senderId, 'Invalid date. Use YYYYMMDD format: /trip 90210 -d 20260501');
+        return;
+      }
+      dateContext = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+      locationArg = arg.replace(dFlagMatch[0], dFlagMatch[1]).trim();
+    }
+
+    const destination = locationArg;
+    if (!destination) {
+      await channel.send(senderId, 'Usage: /trip <destination zip>  e.g. /trip 90210\nOptional: /trip 90210 -d 20260501\nSet default origin: /trip -default 22101');
+      return;
+    }
+
+    const origin = getDefaultOrigin();
+    await channel.send(senderId, `Planning trip from ${origin} to ${destination}...`);
+    try {
+      const text = await generateTrip(client, config.inference.model, origin, destination, dateContext);
+      for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
+        await channel.send(senderId, chunk);
+      }
+    } catch (err) {
+      await channel.send(senderId, `/trip failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
   if (cmd === '/briefing') {
     try {
       const briefing = await generateBriefing(config);
@@ -422,8 +503,11 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
       '  /briefing       — instant system briefing: git activity (24h), service',
       '                    health, disk usage, and uptime across all projects',
       '  /bets           — daily market briefing: top movers, macro theme, key takeaway',
-      '  /ipo [-d YYYYMMDD] — upcoming IPO pipeline with predicted open and day-1 close prices; -d searches IPOs on or about a specific date',
+      '  /ipo [TICKER[,TICKER]] [-d YYYYMMDD] — upcoming IPO pipeline; optionally filter to specific tickers (e.g. /ipo OKLO or /ipo OKLO,TSLA)',
+      '  /ipo -symbols (-s)  — compact list of upcoming IPO tickers and expected dates only',
       '  /best [place] [-d YYYYMMDD]   — best things to do and upcoming events at a location; -d sets the target date',
+      '  /trip <dest zip> [-d YYYYMMDD] — plan flight, lodging, and rental car to a destination; -d sets travel date',
+      '  /trip -default <zip>          — set default origin zip code (default: 22101)',
       '  /morning        — personalized morning briefing (weather + health + local)',
       '  /clip [text]    — AI processes clipboard: URL→summary, code→explain, address→nearby',
       '  /mood <1-5>     — log your current mood with an optional note',
