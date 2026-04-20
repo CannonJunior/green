@@ -52,6 +52,9 @@ projects:
   - name: log
     path: /home/junior/src/log
     description: "Personal log with image and GPS support"
+  - name: trip
+    path: /home/junior/src/trip
+    description: "Plans round-trip flights, lodging, and rental cars between zip codes"
 
 claude_code:
   # Path to the claude CLI binary. Defaults to $PATH lookup.
