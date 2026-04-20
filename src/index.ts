@@ -19,6 +19,7 @@ import { runClaudeCode } from './skills/claude-code.js';
 import { runAgentTurn, clearHistory } from './agent.js';
 import { runSubprocessAgentTurn, clearSubprocessHistory } from './skills/subprocess-agent.js';
 import { generateBriefing } from './skills/briefing.js';
+import { getHelp } from './help.js';
 import { generateBets, generateIpo, generateIpoSymbols } from 'bets';
 import { generateBest, getDefaultLocation, setDefaultLocation, isValidZipCode } from 'best';
 import { generateTrip, getDefaultOrigin, setDefaultOrigin } from 'trip';
@@ -492,39 +493,9 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     return;
   }
 
-  if (cmd === '/help') {
-    await channel.send(senderId, [
-      'Green — personal AI assistant',
-      '',
-      'Slash commands:',
-      '  /help           — this message',
-      '  /reset          — clear conversation history for this session',
-      '  /projects       — list Claude Code projects available on this machine',
-      '  /briefing       — instant system briefing: git activity (24h), service',
-      '                    health, disk usage, and uptime across all projects',
-      '  /bets           — daily market briefing: top movers, macro theme, key takeaway',
-      '  /ipo [TICKER[,TICKER]] [-d YYYYMMDD] — upcoming IPO pipeline; optionally filter to specific tickers (e.g. /ipo OKLO or /ipo OKLO,TSLA)',
-      '  /ipo -symbols (-s)  — compact list of upcoming IPO tickers and expected dates only',
-      '  /best [place] [-d YYYYMMDD]   — best things to do and upcoming events at a location; -d sets the target date',
-      '  /trip <dest zip> [-d YYYYMMDD] — plan flight, lodging, and rental car to a destination; -d sets travel date',
-      '  /trip -default <zip>          — set default origin zip code (default: 22101)',
-      '  /morning        — personalized morning briefing (weather + health + local)',
-      '  /clip [text]    — AI processes clipboard: URL→summary, code→explain, address→nearby',
-      '  /mood <1-5>     — log your current mood with an optional note',
-      '  /chew           — attach any food image; Green routes it to the right Chew module',
-      '  /equipment      — attach a kitchen equipment photo to identify and add it to Chew',
-      '  /log [text]     — add a personal log entry (attach image for GPS tagging)',
-      '  /log today|week|month — AI summary of log entries',
-      '  /log search <q> — search log entries',
-      '  /log map        — interactive map URL for geotagged images',
-      '',
-      'Chat naturally for everything else (uses Claude Code Pro quota):',
-      '  - Ask questions about code in any configured project',
-      '  - Request changes, debug issues, search the web',
-      '',
-      'Prefix any message with "#api " to force Anthropic API processing.',
-      'API messages report token cost at the end of each response.',
-    ].join('\n'));
+  if (cmd === '/help' || cmd.startsWith('/help ')) {
+    const helpArg = msg.text.trim().slice('/help'.length).trim() || undefined;
+    await channel.send(senderId, getHelp(helpArg));
     return;
   }
 
