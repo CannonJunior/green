@@ -240,7 +240,7 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     try {
       const chewProject = getProject(config, 'chew') ?? getProject(config, 'green') ?? config.projects[0];
       const runPrompt = (prompt: string) => runClaudeCode(chewProject!, prompt, config);
-      const route = await routeChewImage(apiKey!, imagePath);
+      const route = await routeChewImage(apiKey!, imagePath, config.inference.model);
       console.log(`[chew] routed to module=${route.module} confidence=${route.confidence}`);
       if (route.module === 'kitchen') {
         await channel.send(senderId, 'Kitchen equipment detected — identifying...');
