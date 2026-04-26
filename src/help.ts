@@ -63,6 +63,31 @@ const ENTRIES: HelpEntry[] = [
       'uptime. Useful as a morning check-in without leaving the messaging app.',
   },
   {
+    name: 'alpha',
+    summary: 'Earnings breakout analyzer — scores stocks 0–85 on revenue, margins, and EPS beats.',
+    usage: [
+      '/alpha',
+      '/alpha <TICKER>[,<TICKER>]',
+      '/alpha --week',
+    ],
+    description:
+      'Fetches quarterly revenue, gross margin history, and EPS beat/miss records ' +
+      'from Alpha Vantage (free key), then scores each stock against the breakout ' +
+      'framework: revenue acceleration, margin expansion, and consecutive EPS beats. ' +
+      'An Anthropic web-search pass adds forward guidance language and analyst reactions. ' +
+      'Bare /alpha shows today\'s earnings reporters. Built for cron-job daily delivery via Signal.',
+    options: [
+      { flag: 'TICKER[,TICKER]', desc: 'Analyze one to five specific tickers (US or ADR).' },
+      { flag: '--week, -w',      desc: 'Show the earnings calendar for the next 7 days.' },
+    ],
+    examples: [
+      '/alpha',
+      '/alpha MU',
+      '/alpha MU ASML HXSCL',
+      '/alpha --week',
+    ],
+  },
+  {
     name: 'bets',
     summary: 'Daily market briefing: top movers, macro theme, and fund-manager takeaway.',
     usage: ['/bets'],

@@ -20,6 +20,8 @@ import { runAgentTurn, clearHistory } from './agent.js';
 import { runSubprocessAgentTurn, clearSubprocessHistory } from './skills/subprocess-agent.js';
 import { generateBriefing } from './skills/briefing.js';
 import { getHelp } from './help.js';
+// runAlphaDaily is imported here for the future daily cron job; see CLAUDE.md
+import { handleAlpha, runAlphaDaily } from 'alpha';
 import { generateBets, generateIpo, generateIpoSymbols } from 'bets';
 import { generateBest, getDefaultLocation, setDefaultLocation, isValidZipCode } from 'best';
 import { generateTrip, getDefaultOrigin, setDefaultOrigin } from 'trip';
@@ -119,6 +121,20 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
       }
     } catch (err) {
       await channel.send(senderId, `Bets failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
+  if (cmd === '/alpha' || cmd.startsWith('/alpha ')) {
+    const alphaArg = msg.text.trim().slice('/alpha'.length).trim();
+    await channel.send(senderId, alphaArg ? `Analyzing ${alphaArg}...` : 'Checking today\'s earnings...');
+    try {
+      const text = await handleAlpha(alphaArg, client, config.inference.model);
+      for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
+        await channel.send(senderId, chunk);
+      }
+    } catch (err) {
+      await channel.send(senderId, `/alpha failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     return;
   }

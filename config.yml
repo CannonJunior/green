@@ -55,6 +55,9 @@ projects:
   - name: trip
     path: /home/junior/src/trip
     description: "Plans round-trip flights, lodging, and rental cars between zip codes"
+  - name: alpha
+    path: /home/junior/src/alpha
+    description: "Earnings breakout analyzer — scores stocks on revenue acceleration, margin expansion, and EPS beats"
 
 claude_code:
   # Path to the claude CLI binary. Defaults to $PATH lookup.
