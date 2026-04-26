@@ -114,7 +114,9 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
   if (cmd === '/bets') {
     await channel.send(senderId, 'Scanning markets...');
     try {
-      const text = await generateBets(apiKey!, config.inference.model);
+      const betsProject = getProject(config, 'bets') ?? getProject(config, 'green') ?? config.projects[0];
+      const runPrompt = (prompt: string) => runClaudeCode(betsProject!, prompt, config);
+      const text = await generateBets(runPrompt);
       for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }
@@ -128,7 +130,9 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     const alphaArg = msg.text.trim().slice('/alpha'.length).trim();
     await channel.send(senderId, alphaArg ? `Analyzing ${alphaArg}...` : 'Checking today\'s earnings...');
     try {
-      const text = await handleAlpha(alphaArg, client, config.inference.model);
+      const betsProject = getProject(config, 'bets') ?? getProject(config, 'green') ?? config.projects[0];
+      const runPrompt = (prompt: string) => runClaudeCode(betsProject!, prompt, config);
+      const text = await handleAlpha(alphaArg, runPrompt);
       for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }
@@ -145,7 +149,9 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     if (ipoArg === '-symbols' || ipoArg === '-s') {
       await channel.send(senderId, 'Fetching upcoming IPO symbols...');
       try {
-        const text = await generateIpoSymbols(apiKey!, config.inference.model);
+        const betsProject = getProject(config, 'bets') ?? getProject(config, 'green') ?? config.projects[0];
+        const runPrompt = (prompt: string) => runClaudeCode(betsProject!, prompt, config, 600_000);
+        const text = await generateIpoSymbols(runPrompt);
         for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
           await channel.send(senderId, chunk);
         }
@@ -184,7 +190,9 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     }
     await channel.send(senderId, statusMsg);
     try {
-      const text = await generateIpo(apiKey!, config.inference.model, ipoDate, ipoSymbols);
+      const betsProject = getProject(config, 'bets') ?? getProject(config, 'green') ?? config.projects[0];
+      const runPrompt = (prompt: string) => runClaudeCode(betsProject!, prompt, config, 600_000);
+      const text = await generateIpo(runPrompt, ipoDate, ipoSymbols);
       for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }
@@ -510,7 +518,11 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
 
   if (cmd === '/help' || cmd.startsWith('/help ')) {
     const helpArg = msg.text.trim().slice('/help'.length).trim() || undefined;
-    await channel.send(senderId, getHelp(helpArg));
+    try {
+      await channel.send(senderId, getHelp(helpArg));
+    } catch (err) {
+      await channel.send(senderId, `Help failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
     return;
   }
 

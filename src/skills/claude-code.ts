@@ -3,6 +3,7 @@ import type { Config, ProjectConfig } from '../config.js';
 
 export interface ClaudeCodeResult {
   success: boolean;
+  timedOut: boolean;
   output: string;
   project: string;
   duration_ms: number;
@@ -17,9 +18,11 @@ export async function runClaudeCode(
   project: ProjectConfig,
   prompt: string,
   config: Config,
+  timeoutMs?: number,
 ): Promise<ClaudeCodeResult> {
   const start = Date.now();
   const { binary, timeout_ms, skip_permissions } = config.claude_code;
+  const timeout = timeoutMs ?? timeout_ms;
 
   const args = ['--print', prompt];
   if (skip_permissions) args.push('--dangerously-skip-permissions');
@@ -42,19 +45,18 @@ export async function runClaudeCode(
     const timer = setTimeout(() => {
       timedOut = true;
       proc.kill('SIGTERM');
-    }, timeout_ms);
+    }, timeout);
 
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
     proc.on('close', (code) => {
       clearTimeout(timer);
-      const output = timedOut
-        ? `(timed out after ${timeout_ms / 1000}s)\n${stdout}`.trim()
-        : stdout.trim() || stderr.trim();
+      const output = (timedOut ? stdout : stdout || stderr).trim();
 
       resolve({
         success: !timedOut && code === 0,
+        timedOut,
         output,
         project: project.name,
         duration_ms: Date.now() - start,
@@ -66,6 +68,7 @@ export async function runClaudeCode(
       clearTimeout(timer);
       resolve({
         success: false,
+        timedOut: false,
         output: `Failed to launch claude: ${err.message}`,
         project: project.name,
         duration_ms: Date.now() - start,

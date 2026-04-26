@@ -74,6 +74,14 @@ interface SignalEnvelope {
     timestamp?: number;
     attachments?: SignalAttachment[];
   };
+  syncMessage?: {
+    sentMessage?: {
+      destination?: string;
+      message?: string;
+      timestamp?: number;
+      attachments?: SignalAttachment[];
+    };
+  };
 }
 
 export class SignalChannel implements Channel {
@@ -176,14 +184,16 @@ export class SignalChannel implements Channel {
 
     const envelope = (msg.params as { envelope?: SignalEnvelope }).envelope;
 
-    // Only process genuine incoming messages. syncMessage.sentMessage are outgoing
-    // copies synced to linked devices — processing them causes every command to fire twice.
-    if (!envelope?.dataMessage) return;
+    // Prefer dataMessage (direct incoming); fall back to syncMessage.sentMessage
+    // (outgoing copy synced to this linked device — the only delivery in "note to self" setups).
+    // Dedup by timestamp handles cases where both arrive for the same message.
+    const msgData = envelope?.dataMessage ?? envelope?.syncMessage?.sentMessage;
+    if (!msgData) return;
 
     const sender = envelope?.sourceNumber;
-    const timestamp = envelope.dataMessage.timestamp;
-    const text = envelope.dataMessage.message;
-    const rawAttachments = envelope.dataMessage.attachments ?? [];
+    const timestamp = msgData.timestamp;
+    const text = msgData.message;
+    const rawAttachments = msgData.attachments ?? [];
 
     const attachments: Attachment[] = rawAttachments
       .filter(a => (a.storedFilename || a.id) && a.contentType)
