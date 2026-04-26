@@ -20,9 +20,8 @@ import { runAgentTurn, clearHistory } from './agent.js';
 import { runSubprocessAgentTurn, clearSubprocessHistory } from './skills/subprocess-agent.js';
 import { generateBriefing } from './skills/briefing.js';
 import { getHelp } from './help.js';
+import { generateBets, generateIpo, generateIpoSymbols, handleAlpha, runAlphaDaily } from 'bets';
 // runAlphaDaily is imported here for the future daily cron job; see CLAUDE.md
-import { handleAlpha, runAlphaDaily } from 'alpha';
-import { generateBets, generateIpo, generateIpoSymbols } from 'bets';
 import { generateBest, getDefaultLocation, setDefaultLocation, isValidZipCode } from 'best';
 import { generateTrip, getDefaultOrigin, setDefaultOrigin } from 'trip';
 import { routeChewImage, processReceiptImage, processEquipmentImage } from 'chew';
