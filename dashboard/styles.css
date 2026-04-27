@@ -1,0 +1,67 @@
+/* Green dashboard tokens + shared styles */
+:root {
+  --bg-0: #070b09;
+  --bg-1: #0a0f0c;
+  --bg-2: #0f1612;
+  --bg-3: #141d18;
+  --bg-4: #1a2820;
+  --line: #1f3028;
+  --line-2: #28402f;
+  --ink-1: #e8f5ec;
+  --ink-2: #b6c9bd;
+  --ink-3: #7a8e82;
+  --ink-4: #4a5e54;
+  /* green ramp */
+  --g-1: #14241c;
+  --g-2: #1a3a2a;
+  --g-3: #2d6a4a;
+  --g-4: #3fb87a;
+  --g-5: #7ee8b0;
+  --g-6: #c8ffdd;
+  /* api accent */
+  --amber: #f0b341;
+  --amber-d: #6b4f1a;
+  /* fail */
+  --red: #ff6b5b;
+  --red-d: #5c2421;
+  /* tier */
+  --tier-free: #7ee8b0;
+  --tier-pro:  #f0b341;
+  --tier-paid: #ff8e6b;
+
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --sans: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+html, body { margin: 0; background: var(--bg-0); color: var(--ink-1); font-family: var(--sans); }
+* { box-sizing: border-box; }
+
+.mono { font-family: var(--mono); }
+.dim { color: var(--ink-3); }
+.dim2 { color: var(--ink-4); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 8px; border-radius: 999px;
+  font-family: var(--mono); font-size: 11px;
+  border: 1px solid var(--line);
+  background: var(--bg-2); color: var(--ink-2);
+  white-space: nowrap;
+}
+.chip.pro { color: var(--g-5); border-color: var(--g-3); background: rgba(63,184,122,.08); }
+.chip.api { color: var(--amber); border-color: #6b4f1a; background: rgba(240,179,65,.08); }
+.chip.ok { color: var(--g-5); border-color: var(--g-3); }
+.chip.fail { color: var(--red); border-color: var(--red-d); background: rgba(255,107,91,.08); }
+.chip.free { color: var(--tier-free); border-color: var(--g-3); }
+.chip.paid { color: var(--tier-paid); border-color: #6b3a2a; background: rgba(255,142,107,.08); }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot.pro { background: var(--g-4); box-shadow: 0 0 10px var(--g-4); }
+.dot.api { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+.dot.fail { background: var(--red); }
+
+/* scrollbar in dark UI */
+.scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroll::-webkit-scrollbar-track { background: transparent; }
+.scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+.scroll::-webkit-scrollbar-thumb:hover { background: var(--line-2); }

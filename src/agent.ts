@@ -150,7 +150,7 @@ export async function runAgentTurn(
     const response = await client.messages.create({
       model: config.inference.model,
       max_tokens: config.inference.max_tokens,
-      system: systemPrompt,
+      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
       tools: TOOLS,
       messages: history,
     });

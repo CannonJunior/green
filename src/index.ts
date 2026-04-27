@@ -25,7 +25,7 @@ import { generateBets, generateIpo, generateIpoSymbols, handleAlpha, runAlphaDai
 import { generateBest, getDefaultLocation, setDefaultLocation, isValidZipCode } from 'best';
 import { generateTrip, getDefaultOrigin, setDefaultOrigin } from 'trip';
 import { routeChewImage, processReceiptImage, processEquipmentImage } from 'chew';
-import { addEntry, summarizeEntries, searchEntries } from 'log';
+import { addEntry, summarizeEntries, searchEntries, saveConversation } from 'log';
 import { LocalChannel } from './channels/local.js';
 import { SignalChannel } from './channels/signal.js';
 import { GatewayChannel } from './channels/gateway.js';
@@ -94,6 +94,23 @@ function resolveAttachmentPath(storedFilename: string): string {
 }
 
 async function handleMessage(msg: IncomingMessage): Promise<void> {
+  const responseParts: string[] = [];
+  const originalSend = channel.send.bind(channel);
+  channel.send = async (sid: string, text: string) => {
+    if (sid === msg.senderId) responseParts.push(text);
+    return originalSend(sid, text);
+  };
+  try {
+    await _handleMessage(msg);
+  } finally {
+    channel.send = originalSend;
+    if (responseParts.length > 0) {
+      saveConversation(msg.senderId, msg.text.trim(), responseParts.join('\n'));
+    }
+  }
+}
+
+async function _handleMessage(msg: IncomingMessage): Promise<void> {
   const { senderId } = msg;
   const cmd = msg.text.trim().toLowerCase();
 
