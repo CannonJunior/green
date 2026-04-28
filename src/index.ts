@@ -26,6 +26,7 @@ import { generateBest, getDefaultLocation, setDefaultLocation, isValidZipCode } 
 import { generateTrip, getDefaultOrigin, setDefaultOrigin } from 'trip';
 import { routeChewImage, processReceiptImage, processEquipmentImage } from 'chew';
 import { addEntry, summarizeEntries, searchEntries, saveConversation } from 'log';
+import type { ConversationTrace } from 'log';
 import { LocalChannel } from './channels/local.js';
 import { SignalChannel } from './channels/signal.js';
 import { GatewayChannel } from './channels/gateway.js';
@@ -84,6 +85,77 @@ const INPUT_COST_PER_TOKEN = 3.00 / 1_000_000;
 const OUTPUT_COST_PER_TOKEN = 15.00 / 1_000_000;
 
 // ---------------------------------------------------------------------------
+// Trace helpers
+// ---------------------------------------------------------------------------
+
+function buildTrace(
+  request: string,
+  latencyMs: number,
+  apiTokens?: { input: number; output: number },
+): ConversationTrace {
+  const text = request.trim();
+  const cmd = text.split(/\s/)[0].toLowerCase();
+
+  // Anthropic Messages API — #api prefix
+  if (text.startsWith('#api ')) {
+    const cost = apiTokens
+      ? apiTokens.input * INPUT_COST_PER_TOKEN + apiTokens.output * OUTPUT_COST_PER_TOKEN
+      : 0;
+    return {
+      channel: 'api',
+      latencyMs,
+      inputTokens: apiTokens?.input,
+      outputTokens: apiTokens?.output,
+      cost,
+      steps: [{ svc: 'Anthropic Messages API', step: 'agent + web_search', ms: latencyMs }],
+    };
+  }
+
+  // Anthropic Messages API — agent-based commands
+  if (cmd === '/morning' || cmd === '/clip') {
+    return {
+      channel: 'api',
+      latencyMs,
+      steps: [{ svc: 'Anthropic Messages API', step: 'agent loop', ms: latencyMs }],
+    };
+  }
+
+  // Claude Code Pro — project-delegated commands
+  const claudeCodeMap: Record<string, string> = {
+    '/best': 'best', '/bets': 'bets', '/alpha': 'bets',
+    '/ipo': 'bets', '/chew': 'chew', '/equipment': 'chew', '/trip': 'trip',
+  };
+  if (cmd in claudeCodeMap) {
+    const project = claudeCodeMap[cmd];
+    return {
+      channel: 'claude-code',
+      project,
+      latencyMs,
+      steps: [{ svc: 'Claude Code Pro', step: `${project} project`, ms: latencyMs }],
+    };
+  }
+
+  // Default agent path — subprocess Claude Code
+  if (!cmd.startsWith('/') || (cmd !== '/projects' && cmd !== '/reset' && cmd !== '/help' && cmd !== '/mood' && !cmd.startsWith('/log'))) {
+    return {
+      channel: 'claude-code',
+      project: 'green',
+      latencyMs,
+      steps: [{ svc: 'Claude Code Pro', step: 'subprocess agent (green)', ms: latencyMs }],
+    };
+  }
+
+  // Local / in-process commands
+  const localSvc =
+    cmd === '/mood' || cmd.startsWith('/log') ? 'SQLite log.db' : 'in-process';
+  return {
+    channel: 'local',
+    latencyMs,
+    steps: [{ svc: localSvc, step: cmd, ms: latencyMs }],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Message handler
 // ---------------------------------------------------------------------------
 
@@ -94,23 +166,27 @@ function resolveAttachmentPath(storedFilename: string): string {
 }
 
 async function handleMessage(msg: IncomingMessage): Promise<void> {
+  const start = Date.now();
   const responseParts: string[] = [];
   const originalSend = channel.send.bind(channel);
   channel.send = async (sid: string, text: string) => {
     if (sid === msg.senderId) responseParts.push(text);
     return originalSend(sid, text);
   };
+  let apiTokens: { input: number; output: number } | undefined;
   try {
-    await _handleMessage(msg);
+    await _handleMessage(msg, (tokens) => { apiTokens = tokens; });
   } finally {
     channel.send = originalSend;
     if (responseParts.length > 0) {
-      saveConversation(msg.senderId, msg.text.trim(), responseParts.join('\n'));
+      const latencyMs = Date.now() - start;
+      const trace = buildTrace(msg.text.trim(), latencyMs, apiTokens);
+      saveConversation(msg.senderId, msg.text.trim(), responseParts.join('\n'), trace);
     }
   }
 }
 
-async function _handleMessage(msg: IncomingMessage): Promise<void> {
+async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: number; output: number }) => void): Promise<void> {
   const { senderId } = msg;
   const cmd = msg.text.trim().toLowerCase();
 
@@ -258,7 +334,9 @@ async function _handleMessage(msg: IncomingMessage): Promise<void> {
     }
     await channel.send(senderId, `Searching for the best of ${location}...`);
     try {
-      const text = await generateBest(client, config.inference.model, location, dateContext);
+      const bestProject = getProject(config, 'best') ?? getProject(config, 'green') ?? config.projects[0];
+      const runPrompt = (prompt: string) => runClaudeCode(bestProject!, prompt, config);
+      const text = await generateBest(runPrompt, location, dateContext);
       for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }
@@ -557,6 +635,7 @@ async function _handleMessage(msg: IncomingMessage): Promise<void> {
         await channel.send(senderId, chunk);
         replied = true;
       }
+      reportTokens({ input: result.inputTokens, output: result.outputTokens });
       const cost = result.inputTokens * INPUT_COST_PER_TOKEN + result.outputTokens * OUTPUT_COST_PER_TOKEN;
       await channel.send(senderId, `Cost: $${cost.toFixed(4)} (${result.inputTokens} in / ${result.outputTokens} out)`);
     } catch (err) {
