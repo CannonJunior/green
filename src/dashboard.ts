@@ -73,9 +73,12 @@ function gatherStats(tree: TreeNode[]) {
 
 function sourceTreeHandler(res: http.ServerResponse) {
   try {
-    const tree = buildTree(GREEN_ROOT);
+    if (!treeCache) {
+      const tree = buildTree(GREEN_ROOT);
+      treeCache = JSON.stringify({ stats: gatherStats(tree), tree });
+    }
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify({ stats: gatherStats(tree), tree }));
+    res.end(treeCache);
   } catch (err) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: String(err) }));
@@ -84,6 +87,9 @@ function sourceTreeHandler(res: http.ServerResponse) {
 
 const PORT = 9003;
 const config = loadConfig();
+
+let convsCache: { json: string; expires: number } | null = null;
+let treeCache: string | null = null;
 
 function parseCommand(request: string): string {
   const t = request.trim();
@@ -94,22 +100,27 @@ function parseCommand(request: string): string {
 
 function apiHandler(res: http.ServerResponse) {
   try {
-    const rows = getRecentConversations(500);
-    const data = {
-      maxTokens: config.inference.max_tokens,
-      conversations: rows.map(r => ({
-        id: r.id,
-        senderId: r.senderId,
-        cmd: parseCommand(r.request),
-        request: r.request,
-        response: r.response,
-        trace: r.trace,
-        createdAt: r.createdAt,
-      })),
-    };
+    const now = Date.now();
+    if (!convsCache || now > convsCache.expires) {
+      const rows = getRecentConversations(500);
+      const payload = {
+        maxTokens: config.inference.max_tokens,
+        conversations: rows.map(r => ({
+          id: r.id,
+          senderId: r.senderId,
+          cmd: parseCommand(r.request),
+          request: r.request,
+          response: r.response,
+          trace: r.trace,
+          createdAt: r.createdAt,
+        })),
+      };
+      convsCache = { json: JSON.stringify(payload), expires: now + 2000 };
+    }
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(data));
+    res.end(convsCache.json);
   } catch (err) {
+    convsCache = null;
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: String(err) }));
   }
@@ -185,10 +196,16 @@ html,body{height:100%;background:var(--bg0);color:var(--ink1);font-family:var(--
   background:var(--bg2);border:1px solid var(--line);border-radius:4px;
   padding:12px 14px;white-space:pre-wrap;word-break:break-word}
 .block-content.request{color:var(--g6);background:rgba(45,106,74,.1);border-color:var(--g3)}
+.detail-link{color:var(--g4);text-decoration:none;word-break:break-all}
+.detail-link:hover{color:var(--g6);text-decoration:underline}
 .empty{display:flex;align-items:center;justify-content:center;height:100%;
   font-family:var(--mono);font-size:13px;color:var(--ink4);flex-direction:column;gap:8px}
 .empty .hint{font-size:11px}
 mark.hl{background:rgba(240,179,65,.25);color:var(--g6);border-radius:2px;padding:0 1px}
+.dollar-fig.bold{font-weight:700}
+.dollar-fig.bold-green{font-weight:700;color:var(--g5)}
+.dollar-fig.bold-amber{font-weight:700;color:var(--amber)}
+.dollar-fig.highlight{background:rgba(240,179,65,.18);color:var(--amber);border-radius:2px;padding:0 2px}
 
 /* ── trace panel (right rail) — two flex sub-sections ── */
 #trace-panel{border-left:1px solid var(--line);background:var(--bg1);
@@ -213,8 +230,15 @@ mark.hl{background:rgba(240,179,65,.25);color:var(--g6);border-radius:2px;paddin
 .trace-empty{padding:20px 16px;font-family:var(--mono);font-size:11px;color:var(--ink4)}
 
 /* service health rows */
-.health-row{display:grid;grid-template-columns:10px 1fr 36px 48px;align-items:center;
-  gap:8px;padding:5px 16px;border-bottom:1px solid rgba(255,255,255,.02)}
+.health-svc-wrap{border-bottom:1px solid rgba(255,255,255,.02)}
+.health-row{display:grid;grid-template-columns:10px 1fr 36px 48px 14px;align-items:center;
+  gap:8px;padding:5px 16px}
+.health-row.has-urls{cursor:pointer}
+.health-row.has-urls:hover{background:rgba(255,255,255,.03)}
+.health-chevron{font-size:9px;color:var(--ink4);text-align:center;line-height:1;
+  transition:transform .15s;display:inline-block}
+.health-chevron.open{transform:rotate(0deg)}
+.health-chevron:not(.open){transform:rotate(-90deg)}
 .health-dot{width:6px;height:6px;border-radius:1px;flex-shrink:0}
 .health-svc-name{font-family:var(--mono);font-size:11.5px;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis}
@@ -223,6 +247,12 @@ mark.hl{background:rgba(240,179,65,.25);color:var(--g6);border-radius:2px;paddin
 .health-calls{font-family:var(--mono);font-size:11px;color:var(--ink3);text-align:right}
 .health-ms{font-family:var(--mono);font-size:10px;color:var(--ink4);text-align:right}
 .health-empty{padding:16px;font-family:var(--mono);font-size:11px;color:var(--ink4)}
+.health-urls{padding:0 0 6px}
+.health-url-row{display:flex;align-items:baseline;gap:6px;padding:2px 16px 2px 30px}
+.health-url-arrow{font-family:var(--mono);font-size:9px;color:var(--ink4);flex-shrink:0}
+.health-url-link{font-family:var(--mono);font-size:10.5px;color:var(--g4);
+  word-break:break-all;line-height:1.5;text-decoration:none}
+.health-url-link:hover{color:var(--g6);text-decoration:underline}
 
 .trace-stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;
   background:var(--line);border-bottom:1px solid var(--line);margin-bottom:8px}
@@ -285,6 +315,10 @@ mark.hl{background:rgba(240,179,65,.25);color:var(--g6);border-radius:2px;paddin
 .sp-row-info{display:flex;flex-direction:column;gap:2px;min-width:0}
 .sp-label{font-family:var(--mono);font-size:12px;color:var(--ink2)}
 .sp-sub{font-family:var(--mono);font-size:10px;color:var(--ink4)}
+.sp-select{background:var(--bg3);border:1px solid var(--line2);color:var(--ink2);
+  border-radius:3px;padding:3px 8px;font-family:var(--mono);font-size:11px;
+  outline:none;cursor:pointer;flex-shrink:0}
+.sp-select:focus{border-color:var(--g3)}
 /* toggle switch */
 .tog{position:relative;width:36px;height:20px;flex-shrink:0;cursor:pointer}
 .tog input{position:absolute;opacity:0;width:0;height:0}
@@ -351,6 +385,20 @@ mark.hl{background:rgba(240,179,65,.25);color:var(--g6);border-radius:2px;paddin
               </div>
               <label class="tog"><input type="checkbox" id="setting-detail-hl"/><span class="tog-track"><span class="tog-thumb"></span></span></label>
             </div>
+            <div class="sp-section-label">Dollar Figures</div>
+            <div class="sp-row">
+              <div class="sp-row-info">
+                <span class="sp-label">Response style</span>
+                <span class="sp-sub">How to display $ amounts in responses</span>
+              </div>
+              <select id="setting-dollar-style" class="sp-select">
+                <option value="bold">Bold</option>
+                <option value="bold-green">Bold green</option>
+                <option value="bold-amber">Bold amber</option>
+                <option value="highlight">Highlighted</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
           </div>
         </div>
         <!-- ── Source Code (collapsed by default) ── -->
@@ -412,6 +460,8 @@ let data = [];
 let maxTokens = 8192;
 let selected = null;
 let filterText = '';
+let dataHash = '';
+let filterDebounce = null;
 
 function fmtTs(ms) {
   const d = new Date(ms);
@@ -529,6 +579,24 @@ function renderTrace(r) {
   body.innerHTML = statsHtml + stepsHtml;
 }
 
+// Wraps dollar figures in HTML (already escaped) without touching tag content.
+// Pattern: $1,234  $1.5B  $500 million  $2.3 billion  etc.
+const DOLLAR_RE = /(<[^>]*>)|(\$[\d,]+(?:\.\d+)?(?:\s*(?:billion|million|trillion|thousand|[BMTK]))?)/gi;
+function wrapDollars(html, style) {
+  if (!style || style === 'off') return html;
+  return html.replace(DOLLAR_RE, (_, tag, dollar) =>
+    tag ? tag : '<span class="dollar-fig ' + style + '">' + dollar + '</span>'
+  );
+}
+
+// Wraps http/https URLs in <a> tags without touching existing tag content.
+const LINK_RE = /(<[^>]*>)|(https?:\/\/[^\s<>"')\]]+)/g;
+function linkifyUrls(html) {
+  return html.replace(LINK_RE, (_, tag, url) =>
+    tag ? tag : '<a class="detail-link" href="' + url + '" target="_blank" rel="noopener">' + url + '</a>'
+  );
+}
+
 function renderDetail(r) {
   if (!r) {
     document.getElementById('detail-header').style.display = 'none';
@@ -544,14 +612,15 @@ function renderDetail(r) {
   document.getElementById('dh-ts').textContent = fmtTs(r.createdAt);
 
   const detailQ = settings.detailHighlights ? filterText : '';
+  const ds = settings.dollarStyle;
   document.getElementById('detail-body').innerHTML =
     '<div class="block">'
     + '<div class="block-label">Request</div>'
-    + '<div class="block-content request">' + highlightText(r.request, detailQ) + '</div>'
+    + '<div class="block-content request">' + linkifyUrls(wrapDollars(highlightText(r.request, detailQ), ds)) + '</div>'
     + '</div>'
     + '<div class="block">'
     + '<div class="block-label">Response</div>'
-    + '<div class="block-content">' + highlightText(r.response, detailQ) + '</div>'
+    + '<div class="block-content">' + linkifyUrls(wrapDollars(highlightText(r.response, detailQ), ds)) + '</div>'
     + '</div>';
 
   renderTrace(r);
@@ -591,7 +660,14 @@ function selectId(id) {
   selected = id;
   const r = data.find(x => x.id === id);
   renderDetail(r);
-  renderList();
+  if (filterText) {
+    renderList();
+  } else {
+    // Fast path: toggle active class in place rather than rebuilding DOM
+    document.querySelectorAll('#list .row').forEach(el => {
+      el.classList.toggle('active', parseInt(el.dataset.id) === id);
+    });
+  }
   const el = document.querySelector('.row.active');
   if (el) el.scrollIntoView({ block: 'nearest' });
 }
@@ -609,7 +685,7 @@ function renderStats() {
 // ── settings ──────────────────────────────────────────────────────────────────
 const SETTINGS_KEY = 'green_dashboard_settings';
 const settings = (() => {
-  const defaults = { listHighlights: true, detailHighlights: true };
+  const defaults = { listHighlights: true, detailHighlights: true, dollarStyle: 'bold' };
   try { return { ...defaults, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; }
   catch (_) { return defaults; }
 })();
@@ -621,6 +697,7 @@ function saveSettings() {
 function syncSettingsUI() {
   document.getElementById('setting-list-hl').checked = settings.listHighlights;
   document.getElementById('setting-detail-hl').checked = settings.detailHighlights;
+  document.getElementById('setting-dollar-style').value = settings.dollarStyle;
 }
 
 // Panel open / close
@@ -662,6 +739,14 @@ document.getElementById('setting-list-hl').addEventListener('change', e => {
 // Toggle: detail highlights
 document.getElementById('setting-detail-hl').addEventListener('change', e => {
   settings.detailHighlights = e.target.checked;
+  saveSettings();
+  const r = data.find(x => x.id === selected);
+  if (r) renderDetail(r);
+});
+
+// Select: dollar figure style
+document.getElementById('setting-dollar-style').addEventListener('change', e => {
+  settings.dollarStyle = e.target.value;
   saveSettings();
   const r = data.find(x => x.id === selected);
   if (r) renderDetail(r);
@@ -759,6 +844,13 @@ const SVC_META = {
 };
 const TIER_DOT = { pro: 'var(--amber)', paid: 'var(--red)', free: 'var(--g4)' };
 
+const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
+
+function extractUrls(text) {
+  const raw = (text || '').match(URL_RE) || [];
+  return raw.map(u => u.replace(/[.,;:!?)]+$/, ''));
+}
+
 function renderServiceHealth() {
   // Aggregate every trace step across all stored conversations.
   const tally = {};
@@ -766,13 +858,16 @@ function renderServiceHealth() {
     if (!conv.trace?.steps) continue;
     for (const step of conv.trace.steps) {
       if (!tally[step.svc]) {
-        tally[step.svc] = { svc: step.svc, calls: 0, totalMs: 0, lastSeen: 0, cmds: {} };
+        tally[step.svc] = { svc: step.svc, calls: 0, totalMs: 0, lastSeen: 0, cmds: {}, urls: new Set() };
       }
       const t = tally[step.svc];
       t.calls++;
       t.totalMs += step.ms;
       t.lastSeen = Math.max(t.lastSeen, conv.createdAt);
       t.cmds[conv.cmd] = (t.cmds[conv.cmd] || 0) + 1;
+      if (step.svc === 'Claude Code Pro') {
+        for (const url of extractUrls(conv.response)) t.urls.add(url);
+      }
     }
   }
 
@@ -784,7 +879,7 @@ function renderServiceHealth() {
     return;
   }
 
-  body.innerHTML = rows.map(r => {
+  body.innerHTML = rows.map((r, idx) => {
     const meta = SVC_META[r.svc] || { tier: 'free', desc: '' };
     const dot  = '<span class="health-dot" style="background:' + (TIER_DOT[meta.tier] || TIER_DOT.free) + '"></span>';
     const avgMs = r.calls ? Math.round(r.totalMs / r.calls) : 0;
@@ -792,7 +887,13 @@ function renderServiceHealth() {
       .sort((a, b) => b[1] - a[1])
       .map(([k]) => k).slice(0, 4).join(', ');
     const subLine = [meta.desc, cmdList].filter(Boolean).join(' · ');
-    return '<div class="health-row">'
+    const urls = r.urls ? [...r.urls].sort() : [];
+    const hasUrls = urls.length > 0;
+    const urlsId = 'health-urls-' + idx;
+
+    let html = '<div class="health-svc-wrap">'
+      + '<div class="health-row' + (hasUrls ? ' has-urls' : '') + '"'
+      + (hasUrls ? ' data-urls-toggle="' + urlsId + '"' : '') + '>'
       + dot
       + '<div style="min-width:0">'
       +   '<div class="health-svc-name" style="color:' + (r.calls ? 'var(--ink1)' : 'var(--ink4)') + '">' + escHtml(r.svc) + '</div>'
@@ -800,23 +901,56 @@ function renderServiceHealth() {
       + '</div>'
       + '<div class="health-calls">' + r.calls + '</div>'
       + '<div class="health-ms">' + (avgMs ? (avgMs >= 1000 ? (avgMs/1000).toFixed(1)+'s' : avgMs+'ms') : '') + '</div>'
+      + (hasUrls ? '<span class="health-chevron open">▼</span>' : '<span></span>')
       + '</div>';
+
+    if (hasUrls) {
+      html += '<div class="health-urls" id="' + urlsId + '">'
+        + urls.map(url =>
+            '<div class="health-url-row">'
+            + '<span class="health-url-arrow">↳</span>'
+            + '<a class="health-url-link" href="' + escHtml(url) + '" target="_blank" rel="noopener">' + escHtml(url) + '</a>'
+            + '</div>'
+          ).join('')
+        + '</div>';
+    }
+
+    html += '</div>';
+    return html;
   }).join('');
+
+  // Wire toggle clicks
+  body.querySelectorAll('[data-urls-toggle]').forEach(row => {
+    row.addEventListener('click', () => {
+      const id = row.getAttribute('data-urls-toggle');
+      const urlsDiv = document.getElementById(id);
+      const chevron = row.querySelector('.health-chevron');
+      if (!urlsDiv) return;
+      const open = urlsDiv.style.display !== 'none';
+      urlsDiv.style.display = open ? 'none' : 'block';
+      if (chevron) chevron.classList.toggle('open', !open);
+    });
+  });
 }
 
 async function load() {
   try {
     const res = await fetch('/api/conversations');
     const payload = await res.json();
-    const prevLen = data.length;
+    const newData = payload.conversations ?? [];
+    const firstLoad = data.length === 0;
     maxTokens = payload.maxTokens ?? 8192;
-    data = payload.conversations ?? [];
-    renderStats();
-    renderList();
-    renderServiceHealth();
-    if (prevLen === 0 && data.length > 0 && !selected) selectId(data[0].id);
-    else if (selected) {
-      // Re-render trace in case the selected row now has trace data
+    data = newData;
+    const newHash = data.length + ':' + (data[0]?.id ?? '') + ':' + (data[data.length - 1]?.id ?? '');
+    if (newHash !== dataHash) {
+      dataHash = newHash;
+      renderStats();
+      renderList();
+      renderServiceHealth();
+    }
+    if (firstLoad && data.length > 0 && !selected) {
+      selectId(data[0].id);
+    } else if (selected) {
       const r = data.find(x => x.id === selected);
       if (r) renderTrace(r);
     }
@@ -827,11 +961,14 @@ async function load() {
 
 document.getElementById('filter').addEventListener('input', e => {
   filterText = e.target.value;
-  renderList();
-  if (settings.detailHighlights && selected) {
-    const r = data.find(x => x.id === selected);
-    if (r) renderDetail(r);
-  }
+  clearTimeout(filterDebounce);
+  filterDebounce = setTimeout(() => {
+    renderList();
+    if (settings.detailHighlights && selected) {
+      const r = data.find(x => x.id === selected);
+      if (r) renderDetail(r);
+    }
+  }, 60);
 });
 
 document.addEventListener('keydown', e => {
