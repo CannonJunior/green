@@ -52,6 +52,9 @@ projects:
   - name: log
     path: /home/junior/src/log
     description: "Personal log with image and GPS support"
+  - name: tenx
+    path: /home/junior/src/tenx
+    description: "Breakout stock predictor"
   - name: trip
     path: /home/junior/src/trip
     description: "Plans round-trip flights, lodging, and rental cars between zip codes"

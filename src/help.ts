@@ -67,7 +67,7 @@ const ENTRIES: HelpEntry[] = [
     summary: 'Earnings breakout analyzer — scores stocks 0–85 on revenue, margins, and EPS beats.',
     usage: [
       '/alpha',
-      '/alpha <TICKER>[,<TICKER>]',
+      '/alpha <TICKER> [<TICKER>...]',
       '/alpha --week',
     ],
     description:
@@ -77,7 +77,7 @@ const ENTRIES: HelpEntry[] = [
       'An Anthropic web-search pass adds forward guidance language and analyst reactions. ' +
       'Bare /alpha shows today\'s earnings reporters. Built for cron-job daily delivery via Signal.',
     options: [
-      { flag: 'TICKER[,TICKER]', desc: 'Analyze one to five specific tickers (US or ADR).' },
+      { flag: 'TICKER [TICKER...]', desc: 'Analyze one to five tickers (space- or comma-separated, US or ADR).' },
       { flag: '--week, -w',      desc: 'Show the earnings calendar for the next 7 days.' },
     ],
     examples: [
@@ -219,6 +219,20 @@ const ENTRIES: HelpEntry[] = [
       'for dedicated equipment identification — use when you know the image is a kitchen ' +
       'item rather than food.',
     examples: ['/equipment  (with a photo of a sous vide circulator)'],
+  },
+  {
+    name: 'tenx',
+    summary: 'Control the TenX stock analyzer — fetch price data for all tracked stocks.',
+    usage: ['/tenx fetch'],
+    description:
+      'Triggers the TenX server to queue a full Alpha Vantage price fetch for all 10 ' +
+      'tracked semiconductor stocks. Equivalent to clicking "Fetch All Data" in the ' +
+      'TenX dashboard at http://localhost:9004. Takes ~3 minutes to complete due to ' +
+      'the Alpha Vantage 5 req/min rate limit.',
+    options: [
+      { flag: 'fetch', desc: 'Queue all stocks for a full data refresh from Alpha Vantage.' },
+    ],
+    examples: ['/tenx fetch'],
   },
   {
     name: 'log',

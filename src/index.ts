@@ -601,6 +601,23 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
     return;
   }
 
+  if (cmd === '/tenx' || cmd.startsWith('/tenx ')) {
+    const tenxArg = msg.text.trim().slice('/tenx'.length).trim();
+    if (tenxArg === 'fetch') {
+      await channel.send(senderId, 'Queuing all stocks for fetch...');
+      try {
+        const res = await fetch('http://localhost:9004/api/fetch-all', { method: 'POST' });
+        const data = await res.json() as { message?: string; error?: string };
+        await channel.send(senderId, data.message ?? data.error ?? 'Fetch queued.');
+      } catch (err) {
+        await channel.send(senderId, `/tenx fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+    await channel.send(senderId, 'Usage: /tenx fetch');
+    return;
+  }
+
   if (cmd === '/briefing') {
     try {
       const briefing = await generateBriefing(config);
