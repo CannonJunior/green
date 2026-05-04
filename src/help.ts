@@ -102,6 +102,7 @@ const ENTRIES: HelpEntry[] = [
     summary: 'Upcoming IPO pipeline with price predictions, or a compact symbol list.',
     usage: [
       '/ipo',
+      '/ipo -n <count>',
       '/ipo <TICKER>[,<TICKER>]',
       '/ipo -d YYYYMMDD',
       '/ipo -symbols',
@@ -111,14 +112,16 @@ const ENTRIES: HelpEntry[] = [
       'Researches upcoming IPOs using Renaissance Capital, Nasdaq IPO calendar, ' +
       'EquityZen, Forge Global, and recent news. Produces prediction blocks with ' +
       'predicted open price, day-1 close, demand signals, comparables, and risk. ' +
+      'Defaults to the 5 most imminent IPOs; use -n to change that count. ' +
       'Pass specific tickers to focus on those companies only. ' +
       'Use -symbols / -s for a compact ticker-and-date list with no analysis.',
     options: [
+      { flag: '-n <count>',      desc: 'Number of companies to research, 1–20 (default 5)' },
       { flag: 'TICKER[,TICKER]', desc: 'Research only these specific upcoming IPOs (comma-separated)' },
       { flag: '-d YYYYMMDD',     desc: 'Find IPOs expected to price on or near this date' },
       { flag: '-symbols, -s',    desc: 'Return a compact list of tickers and expected dates only' },
     ],
-    examples: ['/ipo', '/ipo OKLO', '/ipo OKLO,KLTR', '/ipo -d 20260501', '/ipo -s'],
+    examples: ['/ipo', '/ipo -n 10', '/ipo -n 3 -d 20260601', '/ipo OKLO', '/ipo OKLO,KLTR', '/ipo -d 20260501', '/ipo -s'],
   },
   {
     name: 'best',

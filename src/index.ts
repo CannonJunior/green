@@ -236,10 +236,10 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/ipo' || cmd.startsWith('/ipo ')) {
-    const ipoArg = msg.text.trim().slice('/ipo'.length).trim();
+    const rawIpoArg = msg.text.trim().slice('/ipo'.length).trim();
 
     // -symbols / -s: return compact ticker list only
-    if (ipoArg === '-symbols' || ipoArg === '-s') {
+    if (rawIpoArg === '-symbols' || rawIpoArg === '-s') {
       await channel.send(senderId, 'Fetching upcoming IPO symbols...');
       try {
         const betsProject = getProject(config, 'bets') ?? getProject(config, 'green') ?? config.projects[0];
@@ -252,6 +252,21 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
         await channel.send(senderId, `/ipo -symbols failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       return;
+    }
+
+    // -n <count>: number of companies to research (1–20)
+    let ipoCount: number | undefined;
+    let ipoArg = rawIpoArg;
+    const nFlagMatch = ipoArg.match(/(^|\s)-n\s+(\d+)(\s|$)/);
+    if (nFlagMatch) {
+      const n = parseInt(nFlagMatch[2], 10);
+      if (n >= 1 && n <= 20) {
+        ipoCount = n;
+      } else {
+        await channel.send(senderId, 'Invalid count. Use: /ipo -n <1-20>');
+        return;
+      }
+      ipoArg = ipoArg.replace(nFlagMatch[0], nFlagMatch[1] || nFlagMatch[3] ? ' ' : '').trim();
     }
 
     // -d YYYYMMDD: full pipeline for a specific date
@@ -277,15 +292,20 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
     if (ipoSymbols) {
       statusMsg = `Researching IPO${ipoSymbols.length > 1 ? 's' : ''}: ${ipoSymbols.join(', ')}...`;
     } else if (ipoDate) {
-      statusMsg = `Researching IPOs on or about ${ipoDate.slice(0, 4)}-${ipoDate.slice(4, 6)}-${ipoDate.slice(6, 8)}...`;
+      const dateLabel = `${ipoDate.slice(0, 4)}-${ipoDate.slice(4, 6)}-${ipoDate.slice(6, 8)}`;
+      statusMsg = ipoCount
+        ? `Researching up to ${ipoCount} IPOs on or about ${dateLabel}...`
+        : `Researching IPOs on or about ${dateLabel}...`;
     } else {
-      statusMsg = 'Researching IPO pipeline...';
+      statusMsg = ipoCount
+        ? `Researching IPO pipeline (top ${ipoCount})...`
+        : 'Researching IPO pipeline...';
     }
     await channel.send(senderId, statusMsg);
     try {
       const betsProject = getProject(config, 'bets') ?? getProject(config, 'green') ?? config.projects[0];
       const runPrompt = (prompt: string) => runClaudeCode(betsProject!, prompt, config, 600_000);
-      const text = await generateIpo(runPrompt, ipoDate, ipoSymbols);
+      const text = await generateIpo(runPrompt, ipoDate, ipoSymbols, ipoCount);
       for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }

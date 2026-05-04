@@ -221,9 +221,15 @@ export class SignalChannel implements Channel {
     }
 
     // Deduplicate: signal-cli can emit multiple receive events for the same message
-    if (timestamp !== undefined) {
-      const key = `${sender}:${timestamp}`;
+    // (e.g. both dataMessage and syncMessage.sentMessage for a note-to-self setup).
+    // When timestamp is present use it as the dedup key; when absent (some signal-cli
+    // versions omit it on syncMessage.sentMessage) fall back to sender+text within a
+    // 5-second bucket so the same command never fires twice in quick succession.
+    {
       const now = Date.now();
+      const key = timestamp !== undefined
+        ? `${sender}:${timestamp}`
+        : `${sender}:${(text ?? '').slice(0, 200)}:${Math.floor(now / 5000)}`;
       if (this.seenMessages.has(key)) {
         console.log('[signal] Dropping duplicate delivery for', key);
         return;
