@@ -33,16 +33,16 @@ projects:
     description: "Provides financial market summaries"
   - name: chew
     path: /home/junior/src/chew
-    description: "All things food to chew on"
+    description: "Next.js food app with Drizzle ORM and SQLite"
   - name: warchief
     path: /home/junior/src/warchief
     description: "A browser based 3D game where you are the Warchief"
   - name: decor
     path: /home/junior/src/decor
-    description: "A browser application for the home"
+    description: "Next.js home app with Drizzle ORM and SQLite"
   - name: red
     path: /home/junior/src/red
-    description: "Robobrain"
+    description: "Mixed Python/JS AI backend system (Robobrain) — large codebase"
   - name: yellow
     path: /home/junior/src/yellow
     description: "Private"
@@ -63,7 +63,7 @@ claude_code:
   # Path to the claude CLI binary. Defaults to $PATH lookup.
   binary: /home/junior/.nvm/versions/node/v22.19.0/bin/claude
   # Kill the claude process after this many milliseconds
-  timeout_ms: 300000
+  timeout_ms: 600000
   # Split responses longer than this into multiple iMessages
   chunk_size: 3800
   # Project name used when user doesn't specify one

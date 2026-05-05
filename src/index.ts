@@ -19,9 +19,9 @@ import { runClaudeCode } from './skills/claude-code.js';
 import { runAgentTurn, clearHistory } from './agent.js';
 import { runSubprocessAgentTurn, clearSubprocessHistory } from './skills/subprocess-agent.js';
 import { generateBriefing } from './skills/briefing.js';
+import { generateServiceStatus } from './skills/services.js';
 import { getHelp } from './help.js';
-import { generateBets, generateIpo, generateIpoSymbols, handleAlpha, runAlphaDaily } from 'bets';
-// runAlphaDaily is imported here for the future daily cron job; see CLAUDE.md
+import { generateBets, generateIpo, generateIpoSymbols, handleAlpha } from 'bets';
 import { generateBest, getDefaultLocation, setDefaultLocation, isValidZipCode } from 'best';
 import { generateTrip, getDefaultOrigin, setDefaultOrigin } from 'trip';
 import { routeChewImage, processReceiptImage, processEquipmentImage } from 'chew';
@@ -46,6 +46,10 @@ if (!apiKey) {
 }
 
 const client = new Anthropic({ apiKey });
+
+const betsProject = getProject(config, 'bets') ?? getProject(config, 'green') ?? config.projects[0];
+const bestProject = getProject(config, 'best') ?? getProject(config, 'green') ?? config.projects[0];
+const chewProject = getProject(config, 'chew') ?? getProject(config, 'green') ?? config.projects[0];
 
 // ---------------------------------------------------------------------------
 // Channel selection
@@ -124,6 +128,7 @@ function buildTrace(
   const claudeCodeMap: Record<string, string> = {
     '/best': 'best', '/bets': 'bets', '/alpha': 'bets',
     '/ipo': 'bets', '/chew': 'chew', '/equipment': 'chew', '/trip': 'trip',
+    '/opt': 'green',
   };
   if (cmd in claudeCodeMap) {
     const project = claudeCodeMap[cmd];
@@ -136,7 +141,7 @@ function buildTrace(
   }
 
   // Default agent path — subprocess Claude Code
-  if (!cmd.startsWith('/') || (cmd !== '/projects' && cmd !== '/reset' && cmd !== '/help' && cmd !== '/mood' && !cmd.startsWith('/log'))) {
+  if (!cmd.startsWith('/') || (cmd !== '/projects' && cmd !== '/reset' && cmd !== '/help' && cmd !== '/mood' && cmd !== '/briefing' && cmd !== '/services' && !cmd.startsWith('/log'))) {
     return {
       channel: 'claude-code',
       project: 'green',
@@ -207,7 +212,6 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   if (cmd === '/bets') {
     await channel.send(senderId, 'Scanning markets...');
     try {
-      const betsProject = getProject(config, 'bets') ?? getProject(config, 'green') ?? config.projects[0];
       const runPrompt = (prompt: string) => runClaudeCode(betsProject!, prompt, config);
       const text = await generateBets(runPrompt);
       for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
@@ -223,7 +227,6 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
     const alphaArg = msg.text.trim().slice('/alpha'.length).trim();
     await channel.send(senderId, alphaArg ? `Analyzing ${alphaArg}...` : 'Checking today\'s earnings...');
     try {
-      const betsProject = getProject(config, 'bets') ?? getProject(config, 'green') ?? config.projects[0];
       const runPrompt = (prompt: string) => runClaudeCode(betsProject!, prompt, config);
       const text = await handleAlpha(alphaArg, runPrompt);
       for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
@@ -242,7 +245,6 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
     if (rawIpoArg === '-symbols' || rawIpoArg === '-s') {
       await channel.send(senderId, 'Fetching upcoming IPO symbols...');
       try {
-        const betsProject = getProject(config, 'bets') ?? getProject(config, 'green') ?? config.projects[0];
         const runPrompt = (prompt: string) => runClaudeCode(betsProject!, prompt, config, 600_000);
         const text = await generateIpoSymbols(runPrompt);
         for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
@@ -303,7 +305,6 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
     }
     await channel.send(senderId, statusMsg);
     try {
-      const betsProject = getProject(config, 'bets') ?? getProject(config, 'green') ?? config.projects[0];
       const runPrompt = (prompt: string) => runClaudeCode(betsProject!, prompt, config, 600_000);
       const text = await generateIpo(runPrompt, ipoDate, ipoSymbols, ipoCount);
       for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
@@ -354,7 +355,6 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
     }
     await channel.send(senderId, `Searching for the best of ${location}...`);
     try {
-      const bestProject = getProject(config, 'best') ?? getProject(config, 'green') ?? config.projects[0];
       const runPrompt = (prompt: string) => runClaudeCode(bestProject!, prompt, config);
       const text = await generateBest(runPrompt, location, dateContext);
       for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
@@ -376,7 +376,6 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
     console.log(`[chew] storedFilename=${attachment.storedFilename} imagePath=${imagePath}`);
     await channel.send(senderId, 'Classifying image...');
     try {
-      const chewProject = getProject(config, 'chew') ?? getProject(config, 'green') ?? config.projects[0];
       const runPrompt = (prompt: string) => runClaudeCode(chewProject!, prompt, config);
       const route = await routeChewImage(apiKey!, imagePath, config.inference.model);
       console.log(`[chew] routed to module=${route.module} confidence=${route.confidence}`);
@@ -409,7 +408,6 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
     console.log(`[equipment] storedFilename=${attachment.storedFilename} imagePath=${imagePath}`);
     await channel.send(senderId, 'Identifying kitchen equipment...');
     try {
-      const chewProject = getProject(config, 'chew') ?? getProject(config, 'green') ?? config.projects[0];
       const runPrompt = (prompt: string) => runClaudeCode(chewProject!, prompt, config);
       const result = await processEquipmentImage(imagePath, config.chew.url, runPrompt);
       console.log('[equipment] processEquipmentImage returned:', result.slice(0, 120));
@@ -638,12 +636,88 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
     return;
   }
 
+  if (cmd === '/opt' || cmd.startsWith('/opt ')) {
+    const optArg = msg.text.trim().slice('/opt'.length).trim().toLowerCase();
+
+    const targetProjects = optArg
+      ? config.projects.filter(p => p.name === optArg)
+      : config.projects;
+
+    if (optArg && targetProjects.length === 0) {
+      await channel.send(senderId, `Unknown project: ${optArg}. Use /projects to see all projects.`);
+      return;
+    }
+
+    const projectList = targetProjects
+      .map(p => `- ${p.name} (${p.path}): ${p.description}`)
+      .join('\n');
+
+    const label = optArg || 'all projects';
+    await channel.send(senderId, `Investigating optimizations for ${label}...`);
+
+    try {
+      const greenProject = getProject(config, 'green') ?? config.projects[0];
+      const prompt = [
+        'Investigate the following project(s) for concrete optimization opportunities.',
+        'Read each project\'s package.json, key source files, and configuration before responding.',
+        '',
+        'Projects:',
+        projectList,
+        '',
+        'For each project:',
+        '1. Identify the top 2–3 high-value improvements across: performance, code quality, dependency hygiene, security, or architecture.',
+        '2. Be specific — name the file, function, or pattern and explain the issue and fix.',
+        '3. Skip cosmetic cleanup (formatting, renaming). Focus on changes with real impact.',
+        '',
+        'Output format (plain text, no markdown):',
+        '',
+        'PROJECT: <name>',
+        '<optimization title>: <1–2 sentences describing the issue and the concrete fix>',
+        '',
+        '(repeat for each project)',
+        '',
+        'PRIORITY',
+        '1. <most impactful change across all projects>',
+        '2. <second most impactful>',
+        '3. <third most impactful>',
+      ].join('\n');
+
+      const result = await runClaudeCode(greenProject!, prompt, config);
+
+      let text: string;
+      if (result.timedOut) {
+        const elapsed = (result.duration_ms / 1000).toFixed(0);
+        text = result.output
+          ? result.output + `\n\n(cut short — timed out after ${elapsed}s)`
+          : `Optimization scan timed out after ${elapsed}s. Try /opt <project> to analyze one project at a time.`;
+      } else {
+        text = result.output.trim() || '(no findings)';
+      }
+
+      for (const chunk of chunkText(text, config.claude_code.chunk_size)) {
+        await channel.send(senderId, chunk);
+      }
+    } catch (err) {
+      await channel.send(senderId, `/opt failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
   if (cmd === '/briefing') {
     try {
       const briefing = await generateBriefing(config);
       await channel.send(senderId, briefing);
     } catch (err) {
       await channel.send(senderId, `Briefing failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
+  if (cmd === '/services') {
+    try {
+      await channel.send(senderId, await generateServiceStatus(config));
+    } catch (err) {
+      await channel.send(senderId, `Services check failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     return;
   }

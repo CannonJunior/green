@@ -63,6 +63,33 @@ const ENTRIES: HelpEntry[] = [
       'uptime. Useful as a morning check-in without leaving the messaging app.',
   },
   {
+    name: 'services',
+    summary: 'HTTP liveness and systemd status for all local services.',
+    usage: ['/services'],
+    description:
+      'Probes each local server with an HTTP GET (3-second timeout) and reports ' +
+      'the status code and response time, or DOWN if the server does not answer. ' +
+      'Also checks the systemd user-unit state for the green daemon and signal-cli. ' +
+      'Catches cases where a process is running but the server is wedged — unlike ' +
+      '/briefing, which only reads systemd state.',
+    examples: ['/services'],
+  },
+  {
+    name: 'opt',
+    summary: 'Audit all configured projects for actionable optimization opportunities.',
+    usage: ['/opt', '/opt <project>'],
+    description:
+      'Reads each project\'s source files and configuration, then reports the top ' +
+      '2–3 high-value improvements per project — covering performance, code quality, ' +
+      'dependency hygiene, security, and architecture. Ends with a ranked priority list ' +
+      'of the most impactful changes across all projects. Pass a project name to focus ' +
+      'on a single codebase.',
+    options: [
+      { flag: 'project', desc: 'Name of a single project to analyze (must match a name in /projects).' },
+    ],
+    examples: ['/opt', '/opt green', '/opt bets'],
+  },
+  {
     name: 'alpha',
     summary: 'Earnings breakout analyzer — scores stocks 0–85 on revenue, margins, and EPS beats.',
     usage: [
