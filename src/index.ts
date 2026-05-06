@@ -11,9 +11,11 @@
  *   signal   — signal-cli TCP daemon (default)
  *   gateway  — OpenClaw WebSocket Gateway
  */
+import 'dotenv/config';
 import Anthropic from '@anthropic-ai/sdk';
 import path from 'node:path';
 import os from 'node:os';
+import http from 'node:http';
 import { loadConfig, chunkText, getProject } from './config.js';
 import { runClaudeCode } from './skills/claude-code.js';
 import { runAgentTurn, clearHistory } from './agent.js';
@@ -366,14 +368,17 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
     return;
   }
 
-  if (cmd === '/chew') {
+  if (cmd === '/chew' || cmd.startsWith('/chew ')) {
     const attachment = msg.attachments?.[0];
-    if (!attachment) {
-      await channel.send(senderId, 'No attachment found. Send /chew with an image attached.');
+    const chewArg = msg.text.trim().slice('/chew'.length).trim();
+    const imagePath = attachment
+      ? resolveAttachmentPath(attachment.storedFilename)
+      : chewArg || null;
+    if (!imagePath) {
+      await channel.send(senderId, 'No attachment found. Send /chew with an image attached, or pass a file path: /chew /path/to/image.jpg');
       return;
     }
-    const imagePath = resolveAttachmentPath(attachment.storedFilename);
-    console.log(`[chew] storedFilename=${attachment.storedFilename} imagePath=${imagePath}`);
+    console.log(`[chew] imagePath=${imagePath}`);
     await channel.send(senderId, 'Classifying image...');
     try {
       const runPrompt = (prompt: string) => runClaudeCode(chewProject!, prompt, config);
@@ -398,14 +403,17 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
     return;
   }
 
-  if (cmd === '/equipment') {
+  if (cmd === '/equipment' || cmd.startsWith('/equipment ')) {
     const attachment = msg.attachments?.[0];
-    if (!attachment) {
-      await channel.send(senderId, 'No attachment found. Send /equipment with a photo of a kitchen item.');
+    const equipArg = msg.text.trim().slice('/equipment'.length).trim();
+    const imagePath = attachment
+      ? resolveAttachmentPath(attachment.storedFilename)
+      : equipArg || null;
+    if (!imagePath) {
+      await channel.send(senderId, 'No attachment found. Send /equipment with a photo of a kitchen item, or pass a file path: /equipment /path/to/image.jpg');
       return;
     }
-    const imagePath = resolveAttachmentPath(attachment.storedFilename);
-    console.log(`[equipment] storedFilename=${attachment.storedFilename} imagePath=${imagePath}`);
+    console.log(`[equipment] imagePath=${imagePath}`);
     await channel.send(senderId, 'Identifying kitchen equipment...');
     try {
       const runPrompt = (prompt: string) => runClaudeCode(chewProject!, prompt, config);
@@ -632,7 +640,22 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
       }
       return;
     }
-    await channel.send(senderId, 'Usage: /tenx fetch');
+    if (tenxArg === 'bell') {
+      await channel.send(senderId, 'Running market-open sequence...');
+      try {
+        const res = await fetch('http://localhost:9004/api/bell', { method: 'POST' });
+        const data = await res.json() as { triggered?: boolean; skipped?: boolean; reason?: string };
+        if (data.skipped) {
+          await channel.send(senderId, `Bell skipped: ${data.reason}`);
+        } else {
+          await channel.send(senderId, 'Bell triggered. Fetching prices and recomputing models — summary incoming when complete.');
+        }
+      } catch (err) {
+        await channel.send(senderId, `/tenx bell failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+    await channel.send(senderId, 'Usage: /tenx fetch | /tenx bell');
     return;
   }
 
@@ -785,6 +808,38 @@ console.log(`Projects: ${config.projects.map(p => p.name).join(', ')}`);
 
 const stop = channel.listen(handleMessage);
 
+// Push notification server (Signal channel only)
+// POST /api/notify  Authorization: Bearer <mobile.token>  { "text": "..." }
+// Lets co-located services (e.g. TenX) push Signal messages through Green.
+let pushServer: http.Server | undefined;
+if (channelName === 'signal' && config.mobile?.token && config.signal.approved_numbers[0]) {
+  const pushPort  = config.push?.port ?? 9003;
+  const pushToken = config.mobile.token;
+  const recipient = config.signal.approved_numbers[0];
+  pushServer = http.createServer(async (req, res) => {
+    const reply = (status: number, body: object) => {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
+    };
+    if (req.headers['authorization'] !== `Bearer ${pushToken}`) return reply(401, { error: 'Unauthorized' });
+    if (req.method !== 'POST' || req.url !== '/api/notify') return reply(404, { error: 'Not found' });
+    let body: { text?: string };
+    try {
+      const bufs: Buffer[] = [];
+      for await (const chunk of req) bufs.push(chunk as Buffer);
+      body = JSON.parse(Buffer.concat(bufs).toString('utf8'));
+    } catch { return reply(400, { error: 'Invalid JSON' }); }
+    if (!body.text) return reply(400, { error: 'text required' });
+    try {
+      await channel.send(recipient, body.text);
+      reply(200, { ok: true });
+    } catch (err) {
+      reply(500, { error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  pushServer.listen(pushPort, () => console.log(`[push] Notification server on port ${pushPort}`));
+}
+
 // Graceful shutdown
-process.on('SIGINT', () => { stop(); process.exit(0); });
-process.on('SIGTERM', () => { stop(); process.exit(0); });
+process.on('SIGINT', () => { stop(); pushServer?.close(); process.exit(0); });
+process.on('SIGTERM', () => { stop(); pushServer?.close(); process.exit(0); });

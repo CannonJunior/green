@@ -231,38 +231,37 @@ const ENTRIES: HelpEntry[] = [
   {
     name: 'chew',
     summary: 'Process a food image — routes to receipt scanner or pantry item identifier.',
-    usage: ['/chew  (attach an image)'],
+    usage: ['/chew  (attach an image)', '/chew /path/to/image.jpg'],
     description:
-      'Classifies an attached image and routes it to the right Chew module. Kitchen ' +
+      'Classifies an image and routes it to the right Chew module. Kitchen ' +
       'equipment photos go to the equipment identifier; food/pantry photos go to the ' +
-      'receipt and pantry processor. Always attach an image; the command does nothing ' +
-      'without one.',
-    examples: ['/chew  (with a grocery receipt photo attached)'],
+      'receipt and pantry processor. Attach an image or pass a local file path as an argument.',
+    examples: ['/chew  (with a grocery receipt photo attached)', '/chew /tmp/receipt.jpg'],
   },
   {
     name: 'equipment',
     summary: 'Identify a kitchen item from a photo and add it to Chew.',
-    usage: ['/equipment  (attach a photo of the item)'],
+    usage: ['/equipment  (attach a photo of the item)', '/equipment /path/to/image.jpg'],
     description:
-      'Analyzes an attached photo of a kitchen tool, appliance, or gadget, identifies ' +
+      'Analyzes a photo of a kitchen tool, appliance, or gadget, identifies ' +
       'what it is, and adds it to the Chew equipment catalog. More precise than /chew ' +
-      'for dedicated equipment identification — use when you know the image is a kitchen ' +
-      'item rather than food.',
-    examples: ['/equipment  (with a photo of a sous vide circulator)'],
+      'for dedicated equipment identification. Attach an image or pass a local file path as an argument.',
+    examples: ['/equipment  (with a photo of a sous vide circulator)', '/equipment /tmp/circulator.jpg'],
   },
   {
     name: 'tenx',
-    summary: 'Control the TenX stock analyzer — fetch price data for all tracked stocks.',
-    usage: ['/tenx fetch'],
+    summary: 'Control the TenX stock analyzer — fetch prices or trigger the market-open bell.',
+    usage: ['/tenx fetch', '/tenx bell'],
     description:
-      'Triggers the TenX server to queue a full Alpha Vantage price fetch for all 10 ' +
-      'tracked semiconductor stocks. Equivalent to clicking "Fetch All Data" in the ' +
-      'TenX dashboard at http://localhost:9004. Takes ~3 minutes to complete due to ' +
-      'the Alpha Vantage 5 req/min rate limit.',
+      'Sends commands to the TenX server running at http://localhost:9004. ' +
+      'Use "fetch" to queue a full Alpha Vantage price refresh for all tracked stocks ' +
+      '(~3 min due to rate limits). Use "bell" to trigger the market-open sequence: ' +
+      'fetch all prices, recompute breakout models, then push a Signal summary when complete.',
     options: [
       { flag: 'fetch', desc: 'Queue all stocks for a full data refresh from Alpha Vantage.' },
+      { flag: 'bell',  desc: 'Run the market-open sequence: fetch → compute models → Signal summary.' },
     ],
-    examples: ['/tenx fetch'],
+    examples: ['/tenx fetch', '/tenx bell'],
   },
   {
     name: 'log',

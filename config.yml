@@ -85,4 +85,9 @@ mobile:
   # Port the Blue iOS app connects to. Start Green with: npm run dev -- --channel mobile
   port: 9002
   # Generate a strong token with: openssl rand -hex 32
-  token: "change-me-to-a-long-random-string"
+  token: "dacf48bdebb692183c75bed3bc659f18832fd5be23e6f643245d3649f4d63b29"
+
+push:
+  # Push notification server port (runs alongside --channel signal).
+  # POST /api/notify  Authorization: Bearer <mobile.token>  { "text": "..." }
+  port: 9003

@@ -47,6 +47,10 @@ export interface Config {
     /** Bearer token the iOS app must send in the Authorization header */
     token: string;
   };
+  push?: {
+    /** Port for the push notification server (Signal channel only). Default: 9003 */
+    port?: number;
+  };
 }
 
 export function loadConfig(configPath?: string): Config {

@@ -21,10 +21,11 @@
     "@anthropic-ai/sdk": "^0.80.0",
     "best": "file:../best",
     "bets": "file:../bets",
-    "trip": "file:../trip",
     "chew": "file:../chew/green",
-    "log": "file:../log",
+    "dotenv": "^17.4.2",
     "js-yaml": "^4.1.0",
+    "log": "file:../log",
+    "trip": "file:../trip",
     "ws": "^8.18.0"
   },
   "devDependencies": {
