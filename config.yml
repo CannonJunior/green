@@ -58,6 +58,9 @@ projects:
   - name: trip
     path: /home/junior/src/trip
     description: "Plans round-trip flights, lodging, and rental cars between zip codes"
+  - name: comedy-taxonomy
+    path: /home/junior/src/comedy-taxonomy
+    description: "Comedy classification system — 100 comedian profiles with style taxonomy and 3D style dimensions"
 
 claude_code:
   # Path to the claude CLI binary. Defaults to $PATH lookup.

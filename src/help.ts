@@ -151,6 +151,42 @@ const ENTRIES: HelpEntry[] = [
     examples: ['/ipo', '/ipo -n 10', '/ipo -n 3 -d 20260601', '/ipo OKLO', '/ipo OKLO,KLTR', '/ipo -d 20260501', '/ipo -s'],
   },
   {
+    name: 'joke',
+    summary: 'Topical joke from today\'s news — Weekend Update style, or tuned by comedian, topic, and style.',
+    usage: [
+      '/joke',
+      '/joke about <topic>',
+      '/joke like <comedian>',
+      '/joke about <topic> like <comedian>',
+      '/joke [-dark] [-safe] [-wordplay] [-absurdist] [-observational] [-satire]',
+    ],
+    description:
+      'Searches for today\'s top news stories and writes a sharp topical joke in the ' +
+      'style of a late-night host or SNL\'s Weekend Update (think Colin Jost, Tina Fey, ' +
+      'Seth Meyers). Pass "about <topic>" to target a specific story, "like <comedian>" to ' +
+      'adopt the style of one of 100 comedians in the comedy-taxonomy (George Carlin, ' +
+      'Jerry Seinfeld, Robin Williams, etc.), and style flags to shape the tone.',
+    options: [
+      { flag: 'about <topic>',    desc: 'Search for news on this specific topic and joke about it.' },
+      { flag: 'like <comedian>',  desc: 'Adopt the style of a comedian from the taxonomy (100 profiles available).' },
+      { flag: '-dark',            desc: 'Edgy, provocative, willing to go somewhere uncomfortable.' },
+      { flag: '-safe',            desc: 'Clean and family-friendly.' },
+      { flag: '-wordplay',        desc: 'Built around a pun, double meaning, or linguistic twist.' },
+      { flag: '-absurdist',       desc: 'Follow the most bizarre literal implications of the story.' },
+      { flag: '-observational',   desc: 'Root the joke in a universal human truth the story reveals.' },
+      { flag: '-satire',          desc: 'Use irony and exaggeration to indict something larger.' },
+    ],
+    examples: [
+      '/joke',
+      '/joke about the Fed',
+      '/joke like george carlin',
+      '/joke like seinfeld -observational',
+      '/joke about AI -absurdist',
+      '/joke about congress like carlin -dark',
+      '/joke -wordplay',
+    ],
+  },
+  {
     name: 'best',
     summary: 'Best things to do and upcoming events at a location this week.',
     usage: [
@@ -262,6 +298,62 @@ const ENTRIES: HelpEntry[] = [
       { flag: 'bell',  desc: 'Run the market-open sequence: fetch → compute models → Signal summary.' },
     ],
     examples: ['/tenx fetch', '/tenx bell'],
+  },
+  {
+    name: 'remind',
+    summary: 'Set a reminder — fires a Signal message at the specified time.',
+    usage: [
+      '/remind <message> in <N> minutes|hours|days|weeks',
+      '/remind <message> at <H:MM am|pm>',
+      '/remind <message> tomorrow [at <H:MM>]',
+      '/remind list',
+      '/remind cancel <id>',
+      '/remind cancel all',
+    ],
+    description:
+      'Schedules a reminder that fires as a Signal message at the given time. ' +
+      'Time expressions can be relative ("in 2 hours") or clock-based ("at 3pm", ' +
+      '"tomorrow at 9am"). Reminders survive restarts and are polled every 30 seconds. ' +
+      'Use /remind list to see pending reminders and /remind cancel <id> to remove one.',
+    options: [
+      { flag: 'in N unit[s]',       desc: 'Fire N seconds/minutes/hours/days/weeks from now.' },
+      { flag: 'at H[:MM] [am|pm]',  desc: 'Fire at a specific clock time today (or tomorrow if past).' },
+      { flag: 'tomorrow [at H:MM]', desc: 'Fire tomorrow, default 9:00 am if no time given.' },
+      { flag: 'list',               desc: 'Show all pending reminders with their IDs and due times.' },
+      { flag: 'cancel <id>',        desc: 'Cancel the reminder with that ID (shown in /remind list).' },
+      { flag: 'cancel all',         desc: 'Cancel all pending reminders.' },
+    ],
+    examples: [
+      '/remind call dentist in 2 hours',
+      '/remind pick up dry cleaning at 5pm',
+      '/remind check the build tomorrow at 9am',
+      '/remind take meds in 30 minutes',
+      '/remind list',
+      '/remind cancel 003',
+    ],
+  },
+  {
+    name: 'recipe',
+    summary: 'Suggest recipes based on your Chew pantry, or check what a dish needs.',
+    usage: [
+      '/recipe',
+      '/recipe use <ingredient>',
+      '/recipe <dish name>',
+    ],
+    description:
+      'Fetches your current Chew pantry and asks Claude to suggest 3 recipes you can make ' +
+      'right now, noting any key missing ingredients. Pass an ingredient to prioritize ' +
+      'recipes that feature it, or a dish name to check what you\'re missing for that specific dish.',
+    options: [
+      { flag: 'use <ingredient>', desc: 'Prioritize recipes featuring that ingredient.' },
+      { flag: '<dish name>',      desc: 'Check your pantry against a specific dish and list missing items.' },
+    ],
+    examples: [
+      '/recipe',
+      '/recipe use chicken',
+      '/recipe pasta carbonara',
+      '/recipe something quick with eggs',
+    ],
   },
   {
     name: 'log',

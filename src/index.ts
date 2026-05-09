@@ -28,6 +28,8 @@ import { generateBest, getDefaultLocation, setDefaultLocation, isValidZipCode } 
 import { generateTrip, getDefaultOrigin, setDefaultOrigin } from 'trip';
 import { routeChewImage, processReceiptImage, processEquipmentImage } from 'chew';
 import { addEntry, summarizeEntries, searchEntries, saveConversation } from 'log';
+import { parseRemind, addReminder, listReminders, cancelReminder, cancelAllReminders, startReminderPoller } from './skills/remind.js';
+import { parseJokeArgs, loadComedians, findComedian, getComedianStyleContext, buildJokePrompt } from './skills/joke.js';
 import type { ConversationTrace } from 'log';
 import { LocalChannel } from './channels/local.js';
 import { SignalChannel } from './channels/signal.js';
@@ -118,7 +120,7 @@ function buildTrace(
   }
 
   // Anthropic Messages API — agent-based commands
-  if (cmd === '/morning' || cmd === '/clip') {
+  if (cmd === '/morning' || cmd === '/clip' || cmd === '/recipe' || cmd.startsWith('/recipe ') || cmd === '/joke' || cmd.startsWith('/joke ')) {
     return {
       channel: 'api',
       latencyMs,
@@ -143,7 +145,7 @@ function buildTrace(
   }
 
   // Default agent path — subprocess Claude Code
-  if (!cmd.startsWith('/') || (cmd !== '/projects' && cmd !== '/reset' && cmd !== '/help' && cmd !== '/mood' && cmd !== '/briefing' && cmd !== '/services' && !cmd.startsWith('/log'))) {
+  if (!cmd.startsWith('/') || (cmd !== '/projects' && cmd !== '/reset' && cmd !== '/help' && cmd !== '/mood' && cmd !== '/briefing' && cmd !== '/services' && cmd !== '/remind' && !cmd.startsWith('/remind ') && !cmd.startsWith('/log'))) {
     return {
       channel: 'claude-code',
       project: 'green',
@@ -655,7 +657,22 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
       }
       return;
     }
-    await channel.send(senderId, 'Usage: /tenx fetch | /tenx bell');
+    if (tenxArg === 'close') {
+      await channel.send(senderId, 'Running market-close analysis...');
+      try {
+        const res = await fetch('http://localhost:9004/api/close', { method: 'POST' });
+        const data = await res.json() as { triggered?: boolean; skipped?: boolean; reason?: string };
+        if (data.skipped) {
+          await channel.send(senderId, `Close skipped: ${data.reason}`);
+        } else {
+          await channel.send(senderId, 'Close triggered. Fetching news and running analysis — summary incoming when complete.');
+        }
+      } catch (err) {
+        await channel.send(senderId, `/tenx close failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+    await channel.send(senderId, 'Usage: /tenx fetch | /tenx bell | /tenx close');
     return;
   }
 
@@ -722,6 +739,133 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
       }
     } catch (err) {
       await channel.send(senderId, `/opt failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
+  if (cmd === '/joke' || cmd.startsWith('/joke ')) {
+    const jokeArg = msg.text.trim().slice('/joke'.length).trim();
+    const opts = parseJokeArgs(jokeArg);
+
+    // Resolve comedian style context when "like <name>" is specified
+    let comedianCtx: string | undefined;
+    if (opts.comedianQuery) {
+      const comedyProject = getProject(config, 'comedy-taxonomy');
+      if (comedyProject) {
+        const comedians = loadComedians(comedyProject.path);
+        const match = findComedian(comedians, opts.comedianQuery);
+        if (match) {
+          comedianCtx = getComedianStyleContext(match, comedyProject.path);
+        } else {
+          await channel.send(senderId, `No comedian found matching "${opts.comedianQuery}". Writing joke without style constraint.`);
+        }
+      }
+    }
+
+    const prompt = buildJokePrompt(opts, comedianCtx);
+    const topicLabel = opts.topic ? ` about "${opts.topic}"` : '';
+    const styleLabel = opts.styles.size > 0 ? ` [${[...opts.styles].join(', ')}]` : '';
+    const comedianLabel = comedianCtx ? ` like ${opts.comedianQuery}` : '';
+    await channel.send(senderId, `Finding today's news${topicLabel}${comedianLabel}${styleLabel}...`);
+
+    try {
+      const result = await runAgentTurn(senderId, prompt, config, client);
+      for (const chunk of result.chunks) {
+        await channel.send(senderId, chunk);
+      }
+    } catch (err) {
+      await channel.send(senderId, `/joke failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
+  if (cmd === '/remind' || cmd.startsWith('/remind ')) {
+    const remindArg = msg.text.trim().slice('/remind'.length).trim();
+
+    if (!remindArg || remindArg === 'help') {
+      await channel.send(senderId, [
+        'Usage:',
+        '  /remind <message> in <N> minutes|hours|days|weeks',
+        '  /remind <message> at <H:MM am|pm>',
+        '  /remind <message> tomorrow [at <H:MM>]',
+        '  /remind list',
+        '  /remind cancel <id>',
+        '  /remind cancel all',
+        'Example: /remind call dentist in 2 hours',
+      ].join('\n'));
+      return;
+    }
+
+    if (remindArg === 'list') {
+      await channel.send(senderId, listReminders());
+      return;
+    }
+
+    if (remindArg.startsWith('cancel ')) {
+      const target = remindArg.slice('cancel '.length).trim();
+      if (target === 'all') {
+        const count = cancelAllReminders();
+        await channel.send(senderId, count > 0 ? `Cancelled ${count} reminder${count === 1 ? '' : 's'}.` : 'No pending reminders to cancel.');
+      } else {
+        const ok = cancelReminder(target);
+        await channel.send(senderId, ok ? `Reminder #${target} cancelled.` : `No reminder found with id #${target}.`);
+      }
+      return;
+    }
+
+    const parsed = parseRemind(remindArg);
+    if (!parsed) {
+      await channel.send(senderId, 'Could not parse a time from that. Try: /remind call dentist in 2 hours');
+      return;
+    }
+    const { id, formattedDue } = addReminder(parsed.message, parsed.dueAt);
+    await channel.send(senderId, `Reminder #${id} set — "${parsed.message}" — ${formattedDue}`);
+    return;
+  }
+
+  if (cmd === '/recipe' || cmd.startsWith('/recipe ')) {
+    const recipeArg = msg.text.trim().slice('/recipe'.length).trim();
+
+    await channel.send(senderId, 'Checking pantry...');
+
+    let pantryContext = '';
+    try {
+      const res = await fetch(`${config.chew.url}/api/pantry/items`, { signal: AbortSignal.timeout(5_000) });
+      if (res.ok) {
+        const items = await res.json() as Array<{ name: string; category: string }>;
+        if (items.length > 0) {
+          const byCategory = new Map<string, string[]>();
+          for (const item of items) {
+            if (!byCategory.has(item.category)) byCategory.set(item.category, []);
+            byCategory.get(item.category)!.push(item.name);
+          }
+          const lines: string[] = [];
+          for (const [cat, names] of byCategory) {
+            lines.push(`${cat}: ${names.join(', ')}`);
+          }
+          pantryContext = `Current pantry:\n${lines.join('\n')}`;
+        }
+      }
+    } catch { /* proceed without pantry if Chew is down */ }
+
+    const prompt = recipeArg
+      ? [
+          pantryContext
+            ? `${pantryContext}\n\nUser request: ${recipeArg}\n\nSuggest 3 recipes that match the request and use available pantry items where possible. For each: name, 2-sentence description, key ingredients needed that are NOT in the pantry.`
+            : `Suggest 3 recipes matching this request: ${recipeArg}. For each: name, 2-sentence description, and key ingredients.`,
+        ].join('')
+      : pantryContext
+        ? `${pantryContext}\n\nSuggest 3 varied recipes I can make with these ingredients. For each: name, 2-sentence description, any key missing ingredients. Keep it concise.`
+        : 'Suggest 3 popular, easy recipes. For each: name, 2-sentence description, and the 5 key ingredients.';
+
+    await channel.send(senderId, 'Thinking up recipes...');
+    try {
+      const result = await runAgentTurn(senderId, prompt, config, client);
+      for (const chunk of result.chunks) {
+        await channel.send(senderId, chunk);
+      }
+    } catch (err) {
+      await channel.send(senderId, `/recipe failed: ${err instanceof Error ? err.message : String(err)}`);
     }
     return;
   }
@@ -840,6 +984,14 @@ if (channelName === 'signal' && config.mobile?.token && config.signal.approved_n
   pushServer.listen(pushPort, () => console.log(`[push] Notification server on port ${pushPort}`));
 }
 
+// Reminder poller (signal channel only — needs a known recipient)
+let reminderPoller: ReturnType<typeof setInterval> | undefined;
+if (channelName === 'signal' && config.signal.approved_numbers[0]) {
+  const recipient = config.signal.approved_numbers[0];
+  reminderPoller = startReminderPoller((text) => channel.send(recipient, text));
+  console.log('[remind] Poller started (30 s interval)');
+}
+
 // Graceful shutdown
-process.on('SIGINT', () => { stop(); pushServer?.close(); process.exit(0); });
-process.on('SIGTERM', () => { stop(); pushServer?.close(); process.exit(0); });
+process.on('SIGINT', () => { stop(); pushServer?.close(); clearInterval(reminderPoller); process.exit(0); });
+process.on('SIGTERM', () => { stop(); pushServer?.close(); clearInterval(reminderPoller); process.exit(0); });
