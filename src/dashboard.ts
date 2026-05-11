@@ -26,7 +26,8 @@ interface TreeNode {
   children?: TreeNode[]; file_count?: number; total_lines?: number;
 }
 
-function countLines(p: string): number {
+function countLines(p: string, size: number): number {
+  if (size > 100_000) return Math.round(size / 40);
   try { return fs.readFileSync(p, 'utf8').split('\n').length; } catch { return 0; }
 }
 
@@ -52,7 +53,7 @@ function buildTree(dir: string, depth = 0): TreeNode[] {
       const ext = path.extname(e.name);
       if (BINARY_EXTS.has(ext)) continue;
       let size = 0; try { size = fs.statSync(full).size; } catch {}
-      const lines = TEXT_EXTS.has(ext) ? countLines(full) : 0;
+      const lines = TEXT_EXTS.has(ext) ? countLines(full, size) : 0;
       items.push({ name: e.name, type: 'file', extension: ext.slice(1) || 'txt', lines, size });
     }
   }
@@ -115,7 +116,7 @@ function apiHandler(res: http.ServerResponse) {
           createdAt: r.createdAt,
         })),
       };
-      convsCache = { json: JSON.stringify(payload), expires: now + 2000 };
+      convsCache = { json: JSON.stringify(payload), expires: now + 8000 };
     }
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(convsCache.json);

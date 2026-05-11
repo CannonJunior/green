@@ -101,14 +101,19 @@ export function parseJokeArgs(arg: string): JokeOptions {
 // Comedian lookup
 // ---------------------------------------------------------------------------
 
+let _comediansCache: { projectPath: string; data: ComedianData[] } | null = null;
+
 export function loadComedians(comedyProjectPath: string): ComedianData[] {
+  if (_comediansCache?.projectPath === comedyProjectPath) return _comediansCache.data;
   try {
     const raw = fs.readFileSync(
       path.join(comedyProjectPath, 'webapp', 'data', 'comedians.json'),
       'utf8',
     );
     const parsed = JSON.parse(raw) as { comedians: ComedianData[] };
-    return parsed.comedians ?? [];
+    const data = parsed.comedians ?? [];
+    _comediansCache = { projectPath: comedyProjectPath, data };
+    return data;
   } catch {
     return [];
   }

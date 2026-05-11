@@ -13,6 +13,7 @@
  */
 import 'dotenv/config';
 import Anthropic from '@anthropic-ai/sdk';
+import pkg from '../package.json' with { type: 'json' };
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
@@ -33,7 +34,6 @@ import { parseJokeArgs, loadComedians, findComedian, getComedianStyleContext, bu
 import type { ConversationTrace } from 'log';
 import { LocalChannel } from './channels/local.js';
 import { SignalChannel } from './channels/signal.js';
-import { GatewayChannel } from './channels/gateway.js';
 import { MobileChannel } from './channels/mobile.js';
 import type { Channel, IncomingMessage } from './channels/types.js';
 
@@ -51,9 +51,10 @@ if (!apiKey) {
 
 const client = new Anthropic({ apiKey });
 
-const betsProject = getProject(config, 'bets') ?? getProject(config, 'green') ?? config.projects[0];
-const bestProject = getProject(config, 'best') ?? getProject(config, 'green') ?? config.projects[0];
-const chewProject = getProject(config, 'chew') ?? getProject(config, 'green') ?? config.projects[0];
+const _greenFallback = getProject(config, 'green') ?? config.projects[0];
+const betsProject = getProject(config, 'bets') ?? _greenFallback;
+const bestProject = getProject(config, 'best') ?? _greenFallback;
+const chewProject = getProject(config, 'chew') ?? _greenFallback;
 
 // ---------------------------------------------------------------------------
 // Channel selection
@@ -69,12 +70,14 @@ function getChannelArg(): string {
 
 const channelName = getChannelArg();
 
-function buildChannel(): Channel {
+async function buildChannel(): Promise<Channel> {
   switch (channelName) {
     case 'local':
       return new LocalChannel();
-    case 'gateway':
+    case 'gateway': {
+      const { GatewayChannel } = await import('./channels/gateway.js');
       return new GatewayChannel(config.openclaw.gateway, config.imessage.approved_numbers);
+    }
     case 'mobile':
       return new MobileChannel(
         config.mobile?.token ?? 'changeme',
@@ -86,7 +89,7 @@ function buildChannel(): Channel {
   }
 }
 
-const channel: Channel = buildChannel();
+const channel: Channel = await buildChannel();
 
 // Pricing: claude-sonnet-4-6 as of April 2026 (verify at console.anthropic.com)
 const INPUT_COST_PER_TOKEN = 3.00 / 1_000_000;
@@ -95,6 +98,10 @@ const OUTPUT_COST_PER_TOKEN = 15.00 / 1_000_000;
 // ---------------------------------------------------------------------------
 // Trace helpers
 // ---------------------------------------------------------------------------
+
+const LOCAL_CMDS = new Set([
+  '/projects', '/reset', '/help', '/mood', '/briefing', '/services', '/remind', '/tenx',
+]);
 
 function buildTrace(
   request: string,
@@ -120,7 +127,7 @@ function buildTrace(
   }
 
   // Anthropic Messages API — agent-based commands
-  if (cmd === '/morning' || cmd === '/clip' || cmd === '/recipe' || cmd.startsWith('/recipe ') || cmd === '/joke' || cmd.startsWith('/joke ')) {
+  if (cmd === '/morning' || cmd === '/clip' || cmd === '/recipe' || cmd === '/joke') {
     return {
       channel: 'api',
       latencyMs,
@@ -145,7 +152,7 @@ function buildTrace(
   }
 
   // Default agent path — subprocess Claude Code
-  if (!cmd.startsWith('/') || (cmd !== '/projects' && cmd !== '/reset' && cmd !== '/help' && cmd !== '/mood' && cmd !== '/briefing' && cmd !== '/services' && cmd !== '/remind' && !cmd.startsWith('/remind ') && !cmd.startsWith('/log'))) {
+  if (!cmd.startsWith('/') || (!LOCAL_CMDS.has(cmd) && cmd !== '/log')) {
     return {
       channel: 'claude-code',
       project: 'green',
@@ -155,8 +162,9 @@ function buildTrace(
   }
 
   // Local / in-process commands
-  const localSvc =
-    cmd === '/mood' || cmd.startsWith('/log') ? 'SQLite log.db' : 'in-process';
+  const localSvc = cmd === '/mood' || cmd === '/log' ? 'SQLite log.db'
+    : cmd === '/tenx' ? 'local HTTP'
+    : 'in-process';
   return {
     channel: 'local',
     latencyMs,
@@ -168,6 +176,8 @@ function buildTrace(
 // Message handler
 // ---------------------------------------------------------------------------
 
+const inFlightSenders = new Set<string>();
+
 function resolveAttachmentPath(storedFilename: string): string {
   return path.isAbsolute(storedFilename)
     ? storedFilename
@@ -175,6 +185,11 @@ function resolveAttachmentPath(storedFilename: string): string {
 }
 
 async function handleMessage(msg: IncomingMessage): Promise<void> {
+  if (inFlightSenders.has(msg.senderId)) {
+    await channel.send(msg.senderId, 'Still working on your previous request...');
+    return;
+  }
+  inFlightSenders.add(msg.senderId);
   const start = Date.now();
   const responseParts: string[] = [];
   const originalSend = channel.send.bind(channel);
@@ -183,21 +198,24 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
     return originalSend(sid, text);
   };
   let apiTokens: { input: number; output: number } | undefined;
+  const trimmed = msg.text.trim();
   try {
     await _handleMessage(msg, (tokens) => { apiTokens = tokens; });
   } finally {
+    inFlightSenders.delete(msg.senderId);
     channel.send = originalSend;
     if (responseParts.length > 0) {
       const latencyMs = Date.now() - start;
-      const trace = buildTrace(msg.text.trim(), latencyMs, apiTokens);
-      saveConversation(msg.senderId, msg.text.trim(), responseParts.join('\n'), trace);
+      const trace = buildTrace(trimmed, latencyMs, apiTokens);
+      saveConversation(msg.senderId, trimmed, responseParts.join('\n'), trace);
     }
   }
 }
 
 async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: number; output: number }) => void): Promise<void> {
   const { senderId } = msg;
-  const cmd = msg.text.trim().toLowerCase();
+  const trimmed = msg.text.trim();
+  const cmd = trimmed.toLowerCase();
 
   // Built-in slash commands handled before the agent sees them
   if (cmd === '/reset') {
@@ -228,7 +246,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/alpha' || cmd.startsWith('/alpha ')) {
-    const alphaArg = msg.text.trim().slice('/alpha'.length).trim();
+    const alphaArg = trimmed.slice('/alpha'.length).trim();
     await channel.send(senderId, alphaArg ? `Analyzing ${alphaArg}...` : 'Checking today\'s earnings...');
     try {
       const runPrompt = (prompt: string) => runClaudeCode(betsProject!, prompt, config);
@@ -243,7 +261,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/ipo' || cmd.startsWith('/ipo ')) {
-    const rawIpoArg = msg.text.trim().slice('/ipo'.length).trim();
+    const rawIpoArg = trimmed.slice('/ipo'.length).trim();
 
     // -symbols / -s: return compact ticker list only
     if (rawIpoArg === '-symbols' || rawIpoArg === '-s') {
@@ -321,7 +339,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/best' || cmd.startsWith('/best ')) {
-    const arg = msg.text.trim().slice('/best'.length).trim();
+    const arg = trimmed.slice('/best'.length).trim();
 
     if (arg.startsWith('-default ')) {
       const zip = arg.slice('-default '.length).trim();
@@ -372,7 +390,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
 
   if (cmd === '/chew' || cmd.startsWith('/chew ')) {
     const attachment = msg.attachments?.[0];
-    const chewArg = msg.text.trim().slice('/chew'.length).trim();
+    const chewArg = trimmed.slice('/chew'.length).trim();
     const imagePath = attachment
       ? resolveAttachmentPath(attachment.storedFilename)
       : chewArg || null;
@@ -407,7 +425,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
 
   if (cmd === '/equipment' || cmd.startsWith('/equipment ')) {
     const attachment = msg.attachments?.[0];
-    const equipArg = msg.text.trim().slice('/equipment'.length).trim();
+    const equipArg = trimmed.slice('/equipment'.length).trim();
     const imagePath = attachment
       ? resolveAttachmentPath(attachment.storedFilename)
       : equipArg || null;
@@ -469,7 +487,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
 
   if (cmd === '/clip' || cmd.startsWith('/clip ')) {
     const clipContent = (msg.metadata as { content?: string } | undefined)?.content
-      ?? msg.text.trim().slice('/clip'.length).trim();
+      ?? trimmed.slice('/clip'.length).trim();
 
     if (!clipContent) {
       await channel.send(senderId, 'Usage: /clip <content>  or send clipboard via the Blue app.');
@@ -500,7 +518,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/mood' || cmd.startsWith('/mood ')) {
-    const moodArg = msg.text.trim().slice('/mood'.length).trim();
+    const moodArg = trimmed.slice('/mood'.length).trim();
     if (!moodArg) {
       await channel.send(senderId, 'Usage: /mood <1–5 or emoji> [note]  e.g. /mood 4 great run this morning');
       return;
@@ -515,7 +533,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/log' || cmd.startsWith('/log ')) {
-    const arg = msg.text.trim().slice('/log'.length).trim();
+    const arg = trimmed.slice('/log'.length).trim();
 
     // Summarize sub-commands
     if (arg === 'today' || arg === 'week' || arg === 'month') {
@@ -579,7 +597,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/trip' || cmd.startsWith('/trip ')) {
-    const arg = msg.text.trim().slice('/trip'.length).trim();
+    const arg = trimmed.slice('/trip'.length).trim();
 
     if (arg.startsWith('-default ')) {
       const zip = arg.slice('-default '.length).trim();
@@ -630,7 +648,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/tenx' || cmd.startsWith('/tenx ')) {
-    const tenxArg = msg.text.trim().slice('/tenx'.length).trim();
+    const tenxArg = trimmed.slice('/tenx'.length).trim();
     if (tenxArg === 'fetch') {
       await channel.send(senderId, 'Queuing all stocks for fetch...');
       try {
@@ -677,7 +695,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/opt' || cmd.startsWith('/opt ')) {
-    const optArg = msg.text.trim().slice('/opt'.length).trim().toLowerCase();
+    const optArg = trimmed.slice('/opt'.length).trim().toLowerCase();
 
     const targetProjects = optArg
       ? config.projects.filter(p => p.name === optArg)
@@ -744,7 +762,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/joke' || cmd.startsWith('/joke ')) {
-    const jokeArg = msg.text.trim().slice('/joke'.length).trim();
+    const jokeArg = trimmed.slice('/joke'.length).trim();
     const opts = parseJokeArgs(jokeArg);
 
     // Resolve comedian style context when "like <name>" is specified
@@ -780,7 +798,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/remind' || cmd.startsWith('/remind ')) {
-    const remindArg = msg.text.trim().slice('/remind'.length).trim();
+    const remindArg = trimmed.slice('/remind'.length).trim();
 
     if (!remindArg || remindArg === 'help') {
       await channel.send(senderId, [
@@ -824,7 +842,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/recipe' || cmd.startsWith('/recipe ')) {
-    const recipeArg = msg.text.trim().slice('/recipe'.length).trim();
+    const recipeArg = trimmed.slice('/recipe'.length).trim();
 
     await channel.send(senderId, 'Checking pantry...');
 
@@ -890,7 +908,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   if (cmd === '/help' || cmd.startsWith('/help ')) {
-    const helpArg = msg.text.trim().slice('/help'.length).trim() || undefined;
+    const helpArg = trimmed.slice('/help'.length).trim() || undefined;
     try {
       await channel.send(senderId, getHelp(helpArg));
     } catch (err) {
@@ -900,8 +918,8 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
   }
 
   // "#api " prefix — route through Anthropic API, report cost
-  if (msg.text.trim().startsWith('#api ')) {
-    const apiMessage = msg.text.trim().slice(5);
+  if (trimmed.startsWith('#api ')) {
+    const apiMessage = trimmed.slice(5);
     if (!apiMessage) {
       await channel.send(senderId, 'Usage: #api <message>');
       return;
@@ -941,7 +959,7 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
 // Start
 // ---------------------------------------------------------------------------
 
-console.log(`Green v${(await import('../package.json', { with: { type: 'json' } })).default.version} starting`);
+console.log(`Green v${pkg.version} starting`);
 const channelDesc: Record<string, string> = {
   local: 'local (stdin/stdout)',
   signal: `Signal via signal-cli at ${config.signal.daemon}`,

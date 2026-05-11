@@ -30,8 +30,7 @@ function save(reminders: Reminder[]): void {
   fs.writeFileSync(STORE, JSON.stringify(reminders, null, 2));
 }
 
-function genId(): string {
-  const existing = load();
+function genId(existing: Reminder[]): string {
   const max = existing.reduce((m, r) => Math.max(m, parseInt(r.id, 10) || 0), 0);
   return String(max + 1).padStart(3, '0');
 }
@@ -118,8 +117,8 @@ function applyTime(date: Date, hourStr: string, minuteStr: string | undefined, a
 // ---------------------------------------------------------------------------
 
 export function addReminder(message: string, dueAt: Date): { id: string; formattedDue: string } {
-  const id = genId();
   const reminders = load();
+  const id = genId(reminders);
   reminders.push({ id, text: message, dueAt: dueAt.getTime(), createdAt: Date.now() });
   save(reminders);
   return { id, formattedDue: formatAbsolute(dueAt) };
@@ -141,9 +140,9 @@ export function listReminders(): string {
 
 export function cancelReminder(id: string): boolean {
   const reminders = load();
-  const before = reminders.length;
-  save(reminders.filter(r => r.id !== id));
-  return reminders.length > before;
+  const filtered = reminders.filter(r => r.id !== id);
+  save(filtered);
+  return filtered.length < reminders.length;
 }
 
 export function cancelAllReminders(): number {

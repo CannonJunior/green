@@ -7,6 +7,10 @@ import { generateBriefing } from './skills/briefing.js';
 
 // Per-sender conversation history (keyed by phone number or "local")
 const histories = new Map<string, Anthropic.MessageParam[]>();
+const MAX_HISTORY = 20; // keep last 10 turns
+
+let _systemPromptDate = '';
+let _systemPromptText = '';
 
 const TOOLS: Anthropic.Messages.ToolUnion[] = [
   {
@@ -59,15 +63,19 @@ const TOOLS: Anthropic.Messages.ToolUnion[] = [
       properties: {},
       required: [],
     },
+    cache_control: { type: 'ephemeral' },
   },
 ];
 
 function buildSystemPrompt(config: Config): string {
+  const today = new Date().toISOString().split('T')[0];
+  if (today === _systemPromptDate) return _systemPromptText;
+
   const projectList = config.projects
     .map(p => `  - ${p.name}: ${p.description} (${p.path})`)
     .join('\n');
 
-  return [
+  _systemPromptText = [
     `You are Green, a personal AI assistant for ${config.green.name}'s development workflow.`,
     `You receive messages via Signal and can run Claude Code against projects on a Linux machine.`,
     '',
@@ -82,8 +90,10 @@ function buildSystemPrompt(config: Config): string {
     '- Refer to yourself as Green.',
     '- If asked to run code in a project not in the list, say so clearly.',
     '',
-    `Today's date: ${new Date().toISOString().split('T')[0]}`,
+    `Today's date: ${today}`,
   ].join('\n');
+  _systemPromptDate = today;
+  return _systemPromptText;
 }
 
 async function executeToolCall(
@@ -138,7 +148,13 @@ export async function runAgentTurn(
   config: Config,
   client: Anthropic,
 ): Promise<AgentTurnResult> {
-  const history = [...(histories.get(senderId) ?? [])];
+  // Work directly with the stored array — inFlightSenders in index.ts prevents
+  // concurrent access per sender, so the defensive spread copy is unnecessary.
+  let history = histories.get(senderId);
+  if (!history) {
+    history = [];
+    histories.set(senderId, history);
+  }
   history.push({ role: 'user', content: userMessage });
 
   const systemPrompt = buildSystemPrompt(config);
@@ -164,7 +180,7 @@ export async function runAgentTurn(
     if (response.stop_reason === 'end_turn') {
       const textBlock = response.content.find(b => b.type === 'text');
       const replyText = textBlock?.type === 'text' ? textBlock.text : '(no response)';
-      histories.set(senderId, history);
+      if (history.length > MAX_HISTORY) histories.set(senderId, history.slice(-MAX_HISTORY));
       return {
         chunks: chunkText(replyText, config.claude_code.chunk_size),
         inputTokens: totalInputTokens,
@@ -194,7 +210,7 @@ export async function runAgentTurn(
     }
 
     // Unexpected stop reason
-    histories.set(senderId, history);
+    if (history.length > MAX_HISTORY) histories.set(senderId, history.slice(-MAX_HISTORY));
     return {
       chunks: ['(unexpected stop reason: ' + response.stop_reason + ')'],
       inputTokens: totalInputTokens,
