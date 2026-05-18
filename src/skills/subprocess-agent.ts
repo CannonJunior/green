@@ -50,7 +50,14 @@ export async function runSubprocessAgentTurn(
   const recentHistory = history.slice(-(MAX_HISTORY_TURNS * 2));
   const historyText = recentHistory.length > 0
     ? '\n\nPrevious conversation:\n' + recentHistory
-        .map(t => `${t.role === 'user' ? config.green.name : 'Green'}: ${t.content}`)
+        .map((t, idx) => {
+          const role = t.role === 'user' ? config.green.name : 'Green';
+          const isRecent = idx >= recentHistory.length - 2;
+          const content = !isRecent && t.content.length > 500
+            ? t.content.slice(0, 500) + '…'
+            : t.content;
+          return `${role}: ${content}`;
+        })
         .join('\n')
     : '';
 

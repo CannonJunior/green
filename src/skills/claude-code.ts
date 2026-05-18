@@ -38,8 +38,8 @@ export async function runClaudeCode(
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    let stdout = '';
-    let stderr = '';
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
     let timedOut = false;
 
     const timer = setTimeout(() => {
@@ -47,11 +47,13 @@ export async function runClaudeCode(
       proc.kill('SIGTERM');
     }, timeout);
 
-    proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-    proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    proc.stdout.on('data', (chunk: Buffer) => { stdoutChunks.push(chunk); });
+    proc.stderr.on('data', (chunk: Buffer) => { stderrChunks.push(chunk); });
 
     proc.on('close', (code) => {
       clearTimeout(timer);
+      const stdout = Buffer.concat(stdoutChunks).toString();
+      const stderr = Buffer.concat(stderrChunks).toString();
       const output = (timedOut ? stdout : stdout || stderr).trim();
 
       resolve({

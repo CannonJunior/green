@@ -158,20 +158,27 @@ export function cancelAllReminders(): number {
 
 /** Poll every 30 s and fire any due reminders via `send`. */
 export function startReminderPoller(send: (text: string) => Promise<void>): ReturnType<typeof setInterval> {
+  let isRunning = false;
   return setInterval(async () => {
-    const now = Date.now();
-    const all = load();
-    const due = all.filter(r => r.dueAt <= now);
-    if (due.length === 0) return;
+    if (isRunning) return;
+    isRunning = true;
+    try {
+      const now = Date.now();
+      const all = load();
+      const due = all.filter(r => r.dueAt <= now);
+      if (due.length === 0) return;
 
-    save(all.filter(r => r.dueAt > now));
+      save(all.filter(r => r.dueAt > now));
 
-    for (const r of due) {
-      try {
-        await send(`Reminder: ${r.text}`);
-      } catch (err) {
-        console.error('[remind] send failed:', err instanceof Error ? err.message : String(err));
+      for (const r of due) {
+        try {
+          await send(`Reminder: ${r.text}`);
+        } catch (err) {
+          console.error('[remind] send failed:', err instanceof Error ? err.message : String(err));
+        }
       }
+    } finally {
+      isRunning = false;
     }
   }, 30_000);
 }

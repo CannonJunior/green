@@ -7,7 +7,19 @@ import { generateBriefing } from './skills/briefing.js';
 
 // Per-sender conversation history (keyed by phone number or "local")
 const histories = new Map<string, Anthropic.MessageParam[]>();
+const historiesLastAccess = new Map<string, number>();
 const MAX_HISTORY = 20; // keep last 10 turns
+
+// Prune histories for senders not seen in 24 hours
+setInterval(() => {
+  const cutoff = Date.now() - 24 * 3_600_000;
+  for (const [id, ts] of historiesLastAccess) {
+    if (ts < cutoff) {
+      histories.delete(id);
+      historiesLastAccess.delete(id);
+    }
+  }
+}, 3_600_000).unref();
 
 let _systemPromptDate = '';
 let _systemPromptText = '';
@@ -155,6 +167,7 @@ export async function runAgentTurn(
     history = [];
     histories.set(senderId, history);
   }
+  historiesLastAccess.set(senderId, Date.now());
   history.push({ role: 'user', content: userMessage });
 
   const systemPrompt = buildSystemPrompt(config);
@@ -222,5 +235,6 @@ export async function runAgentTurn(
 /** Clear conversation history for a sender (e.g. on "/reset" command). */
 export function clearHistory(senderId: string): void {
   histories.delete(senderId);
+  historiesLastAccess.delete(senderId);
 }
 

@@ -11,6 +11,7 @@
  * Start with: npm run dev -- --channel mobile
  */
 import http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import type { Channel, IncomingMessage } from './types.js';
 
 const DEFAULT_PORT = 9002;
@@ -57,7 +58,7 @@ export class MobileChannel implements Channel {
         return;
       }
 
-      const requestId = `mobile-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const requestId = `mobile-${randomUUID()}`;
       const messages: string[] = [];
       this.pending.set(requestId, messages);
 

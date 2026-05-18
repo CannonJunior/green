@@ -96,8 +96,7 @@ export class SignalChannel implements Channel {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private messageCallback: ((msg: IncomingMessage) => Promise<void>) | null = null;
   // Dedup: track (sender, timestamp) pairs to drop signal-cli duplicate deliveries.
-  // Entries are deleted after 60 s via scheduled cleanup.
-  private readonly seenMessages = new Set<string>();
+  private readonly seenMessages = new Map<string, number>(); // key → expiry ms
 
   constructor(daemonAddress: string, approvedNumbers: string[]) {
     const [host, portStr] = daemonAddress.split(':');
@@ -234,8 +233,15 @@ export class SignalChannel implements Channel {
         console.log('[signal] dropping duplicate delivery for', key);
         return;
       }
-      this.seenMessages.add(key);
-      setTimeout(() => this.seenMessages.delete(key), 60_000);
+      if (this.seenMessages.size >= 10_000) {
+        for (const [k, exp] of this.seenMessages) {
+          if (exp <= now) this.seenMessages.delete(k);
+        }
+        if (this.seenMessages.size >= 10_000) {
+          this.seenMessages.delete(this.seenMessages.keys().next().value!);
+        }
+      }
+      this.seenMessages.set(key, now + 60_000);
     }
 
     console.log('[signal] message from', sender + ':', text, attachments.length ? `(${attachments.length} attachment(s))` : '');

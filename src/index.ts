@@ -91,9 +91,20 @@ async function buildChannel(): Promise<Channel> {
 
 const channel: Channel = await buildChannel();
 
+// Collect send() calls per-sender for conversation logging without per-request channel mutation.
+const pendingResponses = new Map<string, string[]>();
+{
+  const _realSend = channel.send.bind(channel);
+  channel.send = async (sid: string, text: string): Promise<void> => {
+    pendingResponses.get(sid)?.push(text);
+    return _realSend(sid, text);
+  };
+}
+
 // Pricing: claude-sonnet-4-6 as of April 2026 (verify at console.anthropic.com)
 const INPUT_COST_PER_TOKEN = 3.00 / 1_000_000;
 const OUTPUT_COST_PER_TOKEN = 15.00 / 1_000_000;
+const HANDLER_TIMEOUT_MS = 11 * 60_000; // safety valve above runClaudeCode's 10-min timeout
 
 // ---------------------------------------------------------------------------
 // Trace helpers
@@ -200,18 +211,20 @@ async function handleMessage(msg: IncomingMessage): Promise<void> {
   inFlightSenders.add(msg.senderId);
   const start = Date.now();
   const responseParts: string[] = [];
-  const originalSend = channel.send.bind(channel);
-  channel.send = async (sid: string, text: string) => {
-    if (sid === msg.senderId) responseParts.push(text);
-    return originalSend(sid, text);
-  };
+  pendingResponses.set(msg.senderId, responseParts);
   let apiTokens: { input: number; output: number } | undefined;
   const trimmed = msg.text.trim();
+  const cleanupTimer = setTimeout(() => {
+    console.error(`[green] Handler stall for ${msg.senderId} after ${HANDLER_TIMEOUT_MS / 1000}s — releasing lock`);
+    inFlightSenders.delete(msg.senderId);
+    pendingResponses.delete(msg.senderId);
+  }, HANDLER_TIMEOUT_MS);
   try {
     await _handleMessage(msg, (tokens) => { apiTokens = tokens; });
   } finally {
+    clearTimeout(cleanupTimer);
     inFlightSenders.delete(msg.senderId);
-    channel.send = originalSend;
+    pendingResponses.delete(msg.senderId);
     if (responseParts.length > 0) {
       const latencyMs = Date.now() - start;
       const trace = buildTrace(trimmed, latencyMs, apiTokens);
@@ -1002,7 +1015,12 @@ if (channelName === 'signal' && config.mobile?.token && config.signal.approved_n
     let body: { text?: string };
     try {
       const bufs: Buffer[] = [];
-      for await (const chunk of req) bufs.push(chunk as Buffer);
+      let totalSize = 0;
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length;
+        if (totalSize > 10 * 1024) return reply(413, { error: 'Payload too large' });
+        bufs.push(chunk as Buffer);
+      }
       body = JSON.parse(Buffer.concat(bufs).toString('utf8'));
     } catch { return reply(400, { error: 'Invalid JSON' }); }
     if (!body.text) return reply(400, { error: 'text required' });

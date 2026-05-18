@@ -106,11 +106,25 @@ export class GatewayChannel implements Channel {
     };
   }
 
+  private scheduleReconnect(): void {
+    if (!this.stopped) {
+      console.log('[gateway] Disconnected — reconnecting in 5s');
+      this.reconnectTimer = setTimeout(() => this.connect(), 5000);
+    }
+  }
+
   private connect(): void {
     if (this.stopped) return;
     console.log(`[gateway] Connecting to ${this.url}`);
 
-    const ws = new WebSocket(this.url);
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(this.url);
+    } catch (err) {
+      console.error('[gateway] Failed to create WebSocket:', err instanceof Error ? err.message : String(err));
+      this.scheduleReconnect();
+      return;
+    }
     this.ws = ws;
 
     ws.on('open', () => {
@@ -146,10 +160,7 @@ export class GatewayChannel implements Channel {
     });
 
     ws.on('close', () => {
-      if (!this.stopped) {
-        console.log('[gateway] Disconnected — reconnecting in 5s');
-        this.reconnectTimer = setTimeout(() => this.connect(), 5000);
-      }
+      this.scheduleReconnect();
     });
 
     ws.on('error', (err) => {
