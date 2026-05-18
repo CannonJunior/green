@@ -127,11 +127,19 @@ function buildTrace(
   }
 
   // Anthropic Messages API — agent-based commands
-  if (cmd === '/morning' || cmd === '/clip' || cmd === '/recipe' || cmd === '/joke') {
+  if (cmd === '/morning' || cmd === '/clip' || cmd === '/recipe') {
     return {
       channel: 'api',
       latencyMs,
       steps: [{ svc: 'Anthropic Messages API', step: 'agent loop', ms: latencyMs }],
+    };
+  }
+
+  if (cmd === '/joke') {
+    return {
+      channel: 'claude-code',
+      latencyMs,
+      steps: [{ svc: 'Claude Code Pro', step: 'subprocess agent', ms: latencyMs }],
     };
   }
 
@@ -787,8 +795,14 @@ async function _handleMessage(msg: IncomingMessage, reportTokens: (t: { input: n
     await channel.send(senderId, `Finding today's news${topicLabel}${comedianLabel}${styleLabel}...`);
 
     try {
-      const result = await runAgentTurn(senderId, prompt, config, client);
-      for (const chunk of result.chunks) {
+      const project = getProject(config, 'green') ?? config.projects[0];
+      if (!project) {
+        await channel.send(senderId, '/joke failed: no project configured');
+        return;
+      }
+      const result = await runClaudeCode(project, prompt, config);
+      const responseText = result.output || '(no response)';
+      for (const chunk of chunkText(responseText, config.claude_code.chunk_size)) {
         await channel.send(senderId, chunk);
       }
     } catch (err) {

@@ -61,6 +61,9 @@ projects:
   - name: comedy-taxonomy
     path: /home/junior/src/comedy-taxonomy
     description: "Comedy classification system — 100 comedian profiles with style taxonomy and 3D style dimensions"
+  - name: fire_and_ice
+    path: /home/junior/src/fire_and_ice
+    description: ""
 
 claude_code:
   # Path to the claude CLI binary. Defaults to $PATH lookup.
