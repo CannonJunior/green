@@ -97,6 +97,8 @@ export class SignalChannel implements Channel {
   private messageCallback: ((msg: IncomingMessage) => Promise<void>) | null = null;
   // Dedup: track (sender, timestamp) pairs to drop signal-cli duplicate deliveries.
   private readonly seenMessages = new Map<string, number>(); // key → expiry ms
+  // Pending RPC responses keyed by request id.
+  private readonly pendingRpc = new Map<number, (msg: JsonRpcResponse) => void>();
 
   constructor(daemonAddress: string, approvedNumbers: string[]) {
     const [host, portStr] = daemonAddress.split(':');
@@ -111,7 +113,7 @@ export class SignalChannel implements Channel {
       return;
     }
     console.log('[signal] reply:', text);
-    this.rpc('send', { recipient: [senderId], message: text });
+    await this.rpcAwait('send', { recipient: [senderId], message: text });
   }
 
   listen(onMessage: (msg: IncomingMessage) => Promise<void>): () => void {
@@ -178,7 +180,15 @@ export class SignalChannel implements Channel {
   }
 
   private handleFrame(msg: JsonRpcMessage): void {
-    if (!isNotification(msg)) return; // skip responses (subscribe ack, send result)
+    if (!isNotification(msg)) {
+      const resp = msg as JsonRpcResponse;
+      const resolve = this.pendingRpc.get(resp.id);
+      if (resolve) {
+        this.pendingRpc.delete(resp.id);
+        resolve(resp);
+      }
+      return;
+    }
     if (msg.method !== 'receive') return;
 
     const envelope = (msg.params as { envelope?: SignalEnvelope }).envelope;
@@ -255,5 +265,14 @@ export class SignalChannel implements Channel {
   private rpc(method: string, params: Record<string, unknown>): void {
     const frame = JSON.stringify({ jsonrpc: '2.0', method, params, id: this.nextId++ });
     this.socket?.write(frame + '\n');
+  }
+
+  private rpcAwait(method: string, params: Record<string, unknown>): Promise<JsonRpcResponse> {
+    return new Promise((resolve) => {
+      const id = this.nextId++;
+      this.pendingRpc.set(id, resolve);
+      const frame = JSON.stringify({ jsonrpc: '2.0', method, params, id });
+      this.socket?.write(frame + '\n');
+    });
   }
 }
